@@ -3,7 +3,6 @@ from core.fused_add_norm import triton_fused_add_norm
 from core.fused_silu import triton_fused_up_gate_silu
 from core.rmsnorm import triton_rmsnorm
 from core.fused_apply_rope import fused_apply_rope
-from transformers import LlamaForCausalLM
 module = importlib.import_module('transformers.models.llama.modeling_llama')
 
 def rmsnorm_forward(self, hidden_state):
@@ -84,6 +83,6 @@ def decoder_layer_forward(
 module.apply_rotary_pos_emb = fused_apply_rope
 module.LlamaRMSNorm.forward = rmsnorm_forward
 module.LlamaMLP.forward = mlp_forward
-module.LlamaDecoderLayer = decoder_layer_forward
+module.LlamaDecoderLayer.forward = decoder_layer_forward
 
 trigger = None
