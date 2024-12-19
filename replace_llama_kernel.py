@@ -3,7 +3,8 @@ from core.fused_add_norm import triton_fused_add_norm
 from core.fused_silu import triton_fused_up_gate_silu
 from core.rmsnorm import triton_rmsnorm
 from core.fused_apply_rope import fused_apply_rope
-module = importlib.import_module('transformers.models.qwen2.modeling_qwen2')
+from transformers import LlamaForCausalLM
+module = importlib.import_module('transformers.models.llama.modeling_llama')
 
 def rmsnorm_forward(self, hidden_state):
     return triton_rmsnorm(hidden_state, self.weight, self.variance_epsilon)
@@ -15,20 +16,21 @@ def mlp_forward(self, hidden_state):
 def decoder_layer_forward(
         self,
         hidden_states,
-        attention_mask = None,
-        position_ids = None,
-        past_key_value = None,
-        output_attentions = False,
-        use_cache = False,
-        cache_position = None,
-        position_embeddings = None,  # will become mandatory in v4.46
+        attention_mask,
+        position_ids,
+        past_key_value,
+        output_attentions,
+        use_cache,
+        cache_position,
+        position_embeddings,  # will become mandatory in v4.46
         **kwargs,
     ):
         """
         Args:
             hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
-            attention_mask (`torch.FloatTensor`, *optional*): attention mask of size
-                `(batch, sequence_length)` where padding elements are indicated by 0.
+            attention_mask (`torch.FloatTensor`, *optional*):
+                attention mask of size `(batch_size, sequence_length)` if flash attention is used or `(batch_size, 1,
+                query_sequence_length, key_sequence_length)` if default attention is used.
             output_attentions (`bool`, *optional*):
                 Whether or not to return the attentions tensors of all attention layers. See `attentions` under
                 returned tensors for more detail.
@@ -37,7 +39,7 @@ def decoder_layer_forward(
                 (see `past_key_values`).
             past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
             cache_position (`torch.LongTensor` of shape `(sequence_length)`, *optional*):
-                Indices depicting the position of the input sequence tokens in the sequence.
+                Indices depicting the position of the input sequence tokens in the sequence
             position_embeddings (`Tuple[torch.FloatTensor, torch.FloatTensor]`, *optional*):
                 Tuple containing the cosine and sine positional embeddings of shape `(batch_size, seq_len, head_dim)`,
                 with `head_dim` being the embedding dimension of each attention head.
@@ -45,7 +47,6 @@ def decoder_layer_forward(
                 Arbitrary kwargs to be ignored, used for FSDP and other methods that injects code
                 into the model
         """
-
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
@@ -60,6 +61,7 @@ def decoder_layer_forward(
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            **kwargs,
         )
 
         hidden_states, residual = triton_fused_add_norm(hidden_states, 
@@ -80,8 +82,8 @@ def decoder_layer_forward(
         return outputs
 
 module.apply_rotary_pos_emb = fused_apply_rope
-module.Qwen2RMSNorm.forward = rmsnorm_forward
-module.Qwen2MLP.forward = mlp_forward
-module.Qwen2DecoderLayer = decoder_layer_forward
+module.LlamaRMSNorm.forward = rmsnorm_forward
+module.LlamaMLP.forward = mlp_forward
+module.LlamaDecoderLayer = decoder_layer_forward
 
 trigger = None
