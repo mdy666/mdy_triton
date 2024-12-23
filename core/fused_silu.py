@@ -10,14 +10,14 @@ def _fused_silu_fwd(
         stride_m, stride_n,  #
         BLOCK_SIZE_N: tl.constexpr, #
 ):
-
     pid = tl.program_id(axis=0)
     offset = pid * stride_m
+
     cols = tl.arange(0, BLOCK_SIZE_N)
-    for start_n in tl.range(0, N, BLOCK_SIZE_N):
-        cols += start_n
-        mask = cols < N
-        ptrs = offset + cols
+    for start_n in range(0, N, BLOCK_SIZE_N):
+        new_cols = cols + start_n
+        mask = new_cols < N
+        ptrs = offset + new_cols
         up = tl.load(UP+ptrs, mask=mask, other=0.)
         dtype = up.dtype
         up = up.to(tl.float32)
@@ -30,30 +30,27 @@ def _fused_silu_fwd(
 def _fused_silu_bwd_dupgate(UP, GATE, 
                                DY, DUP, DGATE,
                                stride_m, stride_n,
-                               N, BLOCK_N: tl.constexpr
-                               ):
+                               N, BLOCK_N: tl.constexpr,
+                                ):
     pid = tl.program_id(0)
     offset = pid * stride_m
 
     cols = tl.arange(0, BLOCK_N)
-    for start_n in tl.range(0, N, BLOCK_N):
-        cols += start_n
-        ptrs = offset + cols
-        mask = cols < N
+    for start_n in range(0, N, BLOCK_N):
+        new_cols = cols + start_n
+        mask = new_cols < N
+        ptrs = offset + new_cols
         
         dy = tl.load(DY+ptrs, mask=mask, other=0.)
         dtype = dy.dtype
+        dy = dy.to(tl.float32)
         gate = tl.load(GATE+ptrs, mask=mask, other=0.).to(tl.float32)
         up = tl.load(UP+ptrs, mask=mask, other=0.).to(tl.float32)
-
-        act = gate * tl.sigmoid(gate)
+        gate_sigmoid = tl.sigmoid(gate)
+        act = gate_sigmoid * gate
         dup = act * dy
         dact = up * dy
-        gate_neg_exp = tl.exp(-gate)
-        tmp = 1 + gate_neg_exp
-        fenzi =  tmp + gate * gate_neg_exp
-        fenmu = tmp * tmp
-        dgate = (fenzi / fenmu) * dact
+        dgate = (gate_sigmoid + act * (1-gate_sigmoid)) * dact
         tl.store(DUP+ptrs, dup.to(dtype), mask=mask)
         tl.store(DGATE+ptrs, dgate.to(dtype), mask=mask)
 
@@ -64,9 +61,9 @@ class _FusedSiLU(torch.autograd.Function):
         M, N = up.shape
         y = torch.empty_like(gate)
         BLOCK_SIZE_N = triton.next_power_of_2(N)
-        BLOCK_SIZE_N = min(1024, BLOCK_SIZE_N)
-        num_warps = 8
-        num_stages = 1
+        BLOCK_SIZE_N = min(4096, BLOCK_SIZE_N)
+        num_warps = 4
+        num_stages = 4
         _fused_silu_fwd[(M,)](
             up, gate, y, 
             M, N,  #
@@ -93,13 +90,17 @@ class _FusedSiLU(torch.autograd.Function):
                                    N, BLOCK_SIZE_N, 
                                    num_warps=ctx.num_warps, num_stages=ctx.num_stages)
 
+        # up, gate = ctx.saved_tensors
+        # up = up.view(*gate.shape)
+        # # # print(dy.stride(), up.stride(), gate.stride())
+        # # # print(up.shape, gate.shape)
+        # act = torch.nn.functional.silu(gate)
+        # dup = act * dy
+        # dact = up * dy
+        # gate_sigmoid = torch.nn.functional.sigmoid(gate)
+        # dgate = (gate_sigmoid + act * (1-gate_sigmoid)) * dact
         return dup, dgate
 
-
-def up_gate_silu(up, gate):
-    return up * torch.nn.functional.silu(gate)
-
-fused_up_gate_silu = _FusedSiLU.apply
 
 
 def up_gate_silu(up, gate):
