@@ -1,6 +1,6 @@
 # 快速使用
 ## 介绍
-- 一行“import”直接加速huggingface上模型的训练，其它代码无需任何更改。不过主要还是分享下triton的示例教学，unsloth的优化比我做得更好，如果大家代码熟练的话，还是建议去使用unsloth框架。训练再大些的模型（如14B及以上）建议上deepspeed或megatron。
+- 一行“import”直接加速huggingface上模型的训练，其它代码无需任何更改。主要还是分享下triton的示例教学，unsloth的优化比我做得更好，如果大家代码熟练的话，还是建议去使用unsloth框架。训练再大些的模型（如14B及以上）建议上deepspeed或megatron。
 ## packages
 - 建议使用最新的版本
 ```bash
@@ -9,21 +9,26 @@ pip install --upgrade triton
 ```
 ## 使用方法1
 - 在该目录下运行文件
-
+```bash
+from mdy_triton.replace_kernel import *
+# your code
+```
 ## 使用方法2
 ```bash
 pip install .
 from mdy_triton.replace_kernel import *
+# your code
 ```
 - 默认替换所有支持模型的算子，除了非HF官方的模型。如果只替换指定模型可以运行如下：
 ```bash
 from mdy_triton.replace_kernel.qwen2 import trigger
+# your code
 ```
 
 # 接口
 - 所有加速算子的接口都写在了“mdy_triton.core”目录下的文件中，都写了注释，并配了example
-- 与huggingface中的函数无缝衔接，无需任何修改，直接使用
-- 目前个人完成的算子如下(速度测试在04-08的文件中，欢迎打假测试)：
+- 与huggingface中的模型代码无缝衔接，无需任何修改，直接使用
+- 目前个人完成的算子如下(速度测试在04-08的文件中，欢迎测试)：
     - rmsnorm
         - forward加速10倍+，backward加速10倍+
     - add_rmsnorm
