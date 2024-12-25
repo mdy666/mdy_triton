@@ -27,7 +27,8 @@ from mdy_triton.replace_kernel.qwen2 import trigger
 
 # 接口
 - 所有加速算子的接口都写在了“mdy_triton.core”目录下的文件中，都写了注释，并配了example
-- 与huggingface中的模型代码无缝衔接，无需任何修改，直接使用
+- 与huggingface中的模型代码无缝衔接，无需任何修改，直接使用，例如：
+![Local Image](./imgs/example.png)
 - 目前个人完成的算子如下(速度测试在04-08的文件中，欢迎测试)：
     - rmsnorm
         - forward加速10倍+，backward加速10倍+
