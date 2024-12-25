@@ -72,6 +72,7 @@ bash train.sh --deepspeed --replace_kernel
 ## Qwen2 0.5B训练loss
 - bs=256，micro_bs=16, seq_len=2048, zero2, 8*A800，训练加加速84%，比前面的无opeimizer还高。单卡显存54G
 - 不使用unsloth的loss算子，micro_bs=16，直接爆显存，我猜测是torch的corss_entropy的算子在计算过程中，存了大量中间结果，vocab_size太大，很占显存，而小尺寸的模型中间结果其实不怎么占显存，因此开不了大的batch_size。因此这个算子是真神！对小模型太关键了。
+- 对模型的所有Linear的参数重制，sft数据不mask user的content进行预训练测试，图中loss是从100步开始，1400步时loss下降，是因为到了第二个epoch
 ![Local Image](./imgs/qwen2-0.5B.png)
 ## llama3 1B训练loss
 - 配置和上面一样，micro_bs同样可以开到16。训练llama的时候，我发现loss有时非常异常，有一次训练最终收敛效果不太好，可以看看我的训练日志，图中是较好的一次了。主要是因为unsloth的loss算的误差有点大，可以在“09-test-kernel-speed.ipynb”中进行测试，最终的梯度差的比较多，如果崩了，建议小学习率或者换个种子。训练加速45%
