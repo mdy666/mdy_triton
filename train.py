@@ -14,7 +14,6 @@ def get_args():
     parser.add_argument('--model_path',type=str, default='qwen2-vl')
     parser.add_argument('--data_paths', nargs='+')
     parser.add_argument('--deepspeed', action='store_true')
-    parser.add_argument('--fsdp', action='store_true')
     parser.add_argument('--micro_batch_size', type=int, default=4)
     parser.add_argument('--global_batch_size', type=int, default=32)
     parser.add_argument('--output_dir', type=str)
@@ -29,7 +28,7 @@ def get_args():
 
 if __name__ == '__main__':
     dist.init_process_group(backend='nccl')
-    seed = 42
+    seed = 888
     random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -41,8 +40,7 @@ if __name__ == '__main__':
 
     args = get_args()
     if args.replace_kernel:
-        from replace_qwen2_kernel import trigger
-        from replace_llama3_kernel import trigger
+        from mdy_triton.replace_kernel import *
     print_rank0(args.data_paths)
     print_rank0(sys.path)
     print_rank0(args)
@@ -94,7 +92,7 @@ if __name__ == '__main__':
                             warmup_steps=500,
                             disable_tqdm=False,
                             weight_decay=0.01,
-                            seed=42,
+                            seed=seed,
                             logging_dir=args.output_dir,
                             # save_safetensors=False,
                             # save_only_model=True,
@@ -110,7 +108,6 @@ if __name__ == '__main__':
                             #     "sharded_ddp": True,                # 是否启用分片数据并行
                             # },
                             bf16=True,
-                            # fp16=True,
                             save_total_limit=1,
                             save_only_model=True,
                         )

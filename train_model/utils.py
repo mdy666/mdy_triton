@@ -4,7 +4,6 @@ import glob
 from transformers import Trainer
 import json
 import torch
-from transformers import Trainer
 from transformers.trainer_utils import seed_worker
 
 def print_rank0(*args):
@@ -32,8 +31,10 @@ class MyTrainer(Trainer):
         dataloader_params["drop_last"] = self.args.dataloader_drop_last
         dataloader_params["worker_init_fn"] = seed_worker
         dataloader_params["prefetch_factor"] = self.args.dataloader_prefetch_factor
+        # accelerate会加载distributed sampler，不需要了
         return DataLoader(train_dataset, **dataloader_params)
-    
+
+# 每个卡加载不同的数据，不需要设置Distributed Sampler了，节省内存， 传入json路径，必须是messages数据 
 class DistributedDS(Dataset):
     def __init__(self, data_paths: str, tokenizer, max_seq_len=2048, padding_side='left', mask_labels=True, rank=0, world_size=1):
         super().__init__()
@@ -92,7 +93,6 @@ class DistributedDS(Dataset):
                 labels[start+offset:end+1] = input_ids[start+offset:end+1]
         else:
             labels = input_ids
-
 
         if len(input_ids) > self.max_seq_len:
             input_ids = input_ids[:self.max_seq_len]
