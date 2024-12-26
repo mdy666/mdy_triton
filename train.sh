@@ -1,5 +1,5 @@
 set -f
-DATA_PATHS="/mnt/workspace/mdy/data/train_data/intruct_v1.json /mnt/workspace/mdy/data/train_data/choose_qa/* /mnt/workspace/mdy/data/train_data/low_math/*"
+DATA_PATHS="/mnt/workspace/mdy/data/train_data/intruct_v1.json /mnt/workspace/mdy/data/train_data/choose_qa/ /mnt/workspace/mdy/data/train_data/low_math/"
 # DATA_PATHS="/mnt/workspace/mdy/data/train_data/choose_qa/* "
 MODEl_PATH=/mnt/workspace/mdy/models/Llama-3.2-1B-Instruct
 # MODEl_PATH=/mnt/workspace/mdy/models/Qwen2.5-0.5B

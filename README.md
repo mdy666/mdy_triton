@@ -1,8 +1,9 @@
 # 快速使用
 ## 介绍
-- 一行“import”直接加速huggingface上模型的训练，其它代码无需任何更改。主要还是分享下triton的示例教学，unsloth的优化比我做得更好，如果大家代码熟练的话，还是建议去使用unsloth框架。训练再大些的模型（如14B及以上）建议上deepspeed或megatron。
+- 一行“import”直接加速huggingface上模型的训练，其它代码无需任何更改。
+- 主要还是分享下triton的示例教学，unsloth的优化比我做得更好，如果大家代码熟练的话，还是建议去使用unsloth框架。训练再大些的模型（如14B及以上）建议上deepspeed或megatron。
 ## packages
-- 建议使用最新的版本
+- 建议使用最新的版本，否则可能会有问题
 ```bash
 pip install --upgrade transformers
 pip install --upgrade triton
@@ -10,12 +11,17 @@ pip install --upgrade triton
 ## 使用方法1
 - 在该目录下运行文件
 ```bash
+git clone https://github.com/mdy666/mdy_triton.git
+cd mdy_triton
 from mdy_triton.replace_kernel import *
 # your code
 ```
 ## 使用方法2
 ```bash
+git clone https://github.com/mdy666/mdy_triton.git
+cd mdy_triton
 pip install .
+# go to your code dir
 from mdy_triton.replace_kernel import *
 # your code
 ```
@@ -29,15 +35,17 @@ from mdy_triton.replace_kernel.qwen2 import trigger
 - 所有加速算子的接口都写在了“mdy_triton.core”目录下的文件中，都写了注释，并配了example
 - 与huggingface中的模型代码无缝衔接，无需任何修改，直接使用，例如：
 ![Local Image](./imgs/example.png)
-- 目前个人完成的算子如下(速度测试在04-08的文件中，欢迎测试)：
-    - rmsnorm
+- 目前个人完成的算子如下(速度测试在02-08的文件中，欢迎测试)：
+    - triton_rmsnorm
         - forward加速10倍+，backward加速10倍+
-    - add_rmsnorm
+    - triton_fused_add_norm
         - 在rmsnorm的基础上进一步提速30%
     - fused_apply_rope
         - forward加速9倍，backward提速6倍
-    - fused_silu
+    - triton_fused_up_gate_silu 和 triton_fused_up_gate_silu_no_split
         - up和gate不是由一个Linear映射过来的，forward和backward加速接近2倍；由一个矩阵映射过来，forward和backward都加速4倍左右
+    - triton_max 和 triton_min
+        - 在输入张量是连续的和axis=-1进行操作的条件下，比torch的内置max和min函数更快
 - 非自己完成：
     - fast_cross_entropy
         - unsloth的算子，我也没做详细测试，结论是速度快，省显存，模型越小效果越明显
@@ -63,7 +71,7 @@ from mdy_triton.replace_kernel.qwen2 import trigger
 ![Local Image](./imgs/speed.png)
 
 # 模型训练
-- 根据自己需要适当添加额外参数，主要参数直接在“train.sh”中修改即可，目前主要实现了sft，读取messgaes的json数据
+- 目前实现的很简易，对于sft完全足够。根据自己需要适当添加额外参数，主要参数直接在“train.sh”中修改即可，目前主要实现了sft，读取messgaes的json数据
 ## 启动命令
 ```bash
 bash train.sh --deepspeed --replace_kernel

@@ -71,45 +71,40 @@ if __name__ == '__main__':
     dist.barrier()
 
     print_rank0('====================start trainging=======================')
-    train_args = TrainingArguments(output_dir=args.output_dir,
+    train_args = TrainingArguments(
+                            output_dir=args.output_dir,
+                            logging_dir=args.output_dir,
+                            logging_strategy='steps',
+                            logging_steps=1,
+
                             per_device_train_batch_size=args.micro_batch_size,
                             # per_device_eval_batch_size=args.batch_size_per_device * 2,
+                            gradient_accumulation_steps=acc_grad_steps,
+                            
                             # evaluation_strategy='steps',
                             # eval_steps=100,
+
                             save_strategy='no',
                             # save_steps=1000,
                             # save_total_limit=10,
+                            # save_only_model=True,
+                            # save_safetensors=False,
                             # num_train_epochs=2,
-                            logging_strategy='steps',
-                            logging_steps=1,
+
                             dataloader_num_workers=16,
                             dataloader_prefetch_factor=2,
-                            learning_rate=5e-4,             
-                            gradient_accumulation_steps=acc_grad_steps,
-                            lr_scheduler_type='cosine',
+
                             max_steps=args.max_steps,
-                            save_steps=args.max_steps,
                             warmup_steps=500,
-                            disable_tqdm=False,
+                            learning_rate=5e-4,             
+                            lr_scheduler_type='cosine',
                             weight_decay=0.01,
-                            seed=seed,
-                            logging_dir=args.output_dir,
-                            # save_safetensors=False,
-                            # save_only_model=True,
-                            deepspeed='train_model/zero2.json' if args.deepspeed else None,
-                            # fsdp='full_shard' if args.,
-                            # fsdp_config={
-                            #     "sharding_strategy": "FULL_SHARD",  # 全分片策略
-                            #     "cpu_offload": False,               # 是否将参数卸载到 CPU
-                            #     "min_num_params": 1e7,              # 最小参数数量以启用分片
-                            #     "fp32_reduce_scatter": False,       # 是否在 reduce-scatter 中使用 fp32
-                            #     "compute_dtype": torch.bfloat16,     # 计算数据类型
-                            #     "buffer_dtype": torch.bfloat16,      # 缓冲区数据类型
-                            #     "sharded_ddp": True,                # 是否启用分片数据并行
-                            # },
+                            
                             bf16=True,
-                            save_total_limit=1,
-                            save_only_model=True,
+                            deepspeed='train_model/zero2.json' if args.deepspeed else None,  
+
+                            disable_tqdm=False,  
+                            seed=seed,
                         )
     trainer = MyTrainer(model=model,
                       args=train_args,
