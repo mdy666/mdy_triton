@@ -7,10 +7,11 @@ from ..core.rmsnorm import triton_rmsnorm
 from ..core.fused_apply_rope import fused_apply_rope
 from ..core.cross_entyopy_loss import fast_cross_entropy_loss
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from typing import Optional, Union, Tuple, List
+from typing import Optional, Union, Tuple, List     
 import torch
 from .llama import rmsnorm_forward, mlp_forward
 module = importlib.import_module('transformers.models.mistral.modeling_mistral')
+from transformers.models.mistral import MistralForCausalLM
 
 module.apply_rotary_pos_emb = fused_apply_rope
 module.MistralRMSNorm.forward = rmsnorm_forward

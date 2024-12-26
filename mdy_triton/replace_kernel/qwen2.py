@@ -7,7 +7,7 @@ from ..core.cross_entyopy_loss import fast_cross_entropy_loss
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from typing import Optional, Union, Tuple, List
 import torch
-
+from transformers import Qwen2ForCausalLM
 module = importlib.import_module('transformers.models.qwen2.modeling_qwen2')
 
 def rmsnorm_forward(self, hidden_state):
@@ -170,6 +170,19 @@ def causal_forward(
             shift_labels = torch.hstack((labels[..., 1:], self.extra_ignored_labels[:labels.shape[0]]))
             loss = fast_cross_entropy_loss(shift_logits, shift_labels,
                                            n_items = loss_kwargs.get("num_items_in_batch", None) or loss_kwargs.get("n_items", None))
+            
+        # fix loss
+        # loss = None
+        # if labels is not None:
+        #     logits = logits.to(torch.float32)
+        #     shift_logits = logits[:, :-1].contiguous()
+        #     vocab_size = shift_logits.size(-1)
+        #     shift_labels = labels[:, 1:].contiguous()
+        #     num_items_in_batch = loss_kwargs.get("num_items_in_batch", None)
+        #     if num_items_in_batch is not None:
+        #         loss = torch.nn.functional.cross_entropy(shift_logits.view(-1, vocab_size), shift_labels.view(-1), reduction='sum') / num_items_in_batch
+        #     else:
+        #         loss = torch.nn.functional.cross_entropy(shift_logits.view(-1, vocab_size), shift_labels.view(-1))
 
         if not return_dict:
             output = (logits,) + outputs[1:]
