@@ -200,5 +200,5 @@ module.apply_rotary_pos_emb = fused_apply_rope
 module.Qwen2RMSNorm.forward = rmsnorm_forward
 module.Qwen2MLP.forward = mlp_forward
 module.Qwen2DecoderLayer.forward = decoder_layer_forward
-# module.Qwen2ForCausalLM.forward = causal_forward
+module.Qwen2ForCausalLM.forward = causal_forward
 trigger = None
