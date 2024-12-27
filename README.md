@@ -87,7 +87,7 @@ bash train.sh --deepspeed --replace_kernel
 - 配置和上面一样，micro_bs同样可以开到16。训练llama的时候，我发现loss有时非常异常，有一次训练最终收敛效果不太好，可以看看我的训练日志，图中是较好的一次了。主要是因为unsloth的loss算的有些误差，可以在“09-test-kernel-speed.ipynb”中进行测试，最终的梯度差的比较多，如果崩了，建议小学习率或者换个种子。训练加速45%
 ![Local Image](./imgs/llama3-1B.png)
 ## Qwen2 7B sft
-- bs=32, micro_bs=2, seq_len=2048, zero2,  8*A800，训练加加速10%。主要时间都在forward+backward，并且bs很小，unsloth loss的提速作用就很小了。并且存在optimizer更新参数以及通讯，比理论优化速度低一些。
+- bs=32, micro_bs=2, seq_len=2048, zero2,  8*A800，训练加速11%左右。主要时间都在forward+backward，并且bs很小，unsloth loss的提速作用就变得很小了。并且存在optimizer更新参数以及通讯，比理论优化速度低一些。
 # 结语
 - 感谢aigcode的计算资源
 - 如有问题请联系 1670016147@qq.com、提issue、联系小红书等。
