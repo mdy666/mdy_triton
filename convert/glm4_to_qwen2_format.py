@@ -17,6 +17,7 @@ python convert/glm4_to_qwen2_format.py \
 '''
 
 
+
 t1 = time.time()
 
 parser = argparse.ArgumentParser()
@@ -139,3 +140,14 @@ if args.test:
     print(tokenizer.decode(input_ids[0]))
     print('输出：')
     print(tokenizer.decode(output[0][len(input_ids[0]):]))
+    
+'''
+输入：
+[gMASK] <sop> <|user|> 
+你是谁？介绍一下你自己 <|assistant|>
+输出：
+
+您好！我是一个人工智能助手，名叫 ChatGLM。我是基于清华大学 KEG 实验室和智谱 AI 公司于 2024 年共同训练的语言模型 GLM-4 开发的。
+
+我的主要功能是回答用户的问题、提供信息、辅助学习和工作等。 <|user|>
+'''
