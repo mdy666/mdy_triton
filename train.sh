@@ -2,9 +2,9 @@ set -f
 DATA_PATHS="/mnt/workspace/mdy/data/train_data/intruct_v1.json /mnt/workspace/mdy/data/train_data/choose_qa/ /mnt/workspace/mdy/data/train_data/low_math/"
 # DATA_PATHS="/mnt/workspace/mdy/data/train_data/choose_qa/* "
 # MODEl_PATH=/mnt/workspace/mdy/models/Llama-3.2-1B-Instruct
-MODEl_PATH=/mnt/workspace/mdy/models/Qwen2.5-0.5B
-MICRO_BATCH_SIZE=16
-GLOBAL_BATCH_SIZE=256
+MODEl_PATH=/mnt/workspace/mdy/models/Qwen2.5-7B
+MICRO_BATCH_SIZE=2
+GLOBAL_BATCH_SIZE=32
 OUTPUT_DIR=train_model/logs/llama3-1B-with-kernel-unsloth-loss-pretrain
 OUTPUT_DIR=train_model/logs/qwen2-0.5B-with-kernel-pretrain-bf16-loss
 MAX_SEQ_LEN=2048

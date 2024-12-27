@@ -4,6 +4,7 @@ setup(
     name="mdy_triton",
     version="0.1.0",  # 版本号
     author="mdy",  # 作者名字
+    author_email="1670016147@qq.com"
     description="A package for core and replace_kernel functionality",  # 包描述
     long_description=open("README.md").read(),  # 长描述（通常从 README.md 读取）
     long_description_content_type="text/markdown",  # 长描述格式

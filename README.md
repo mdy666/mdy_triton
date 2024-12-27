@@ -57,6 +57,7 @@ from mdy_triton.replace_kernel.qwen2 import trigger
     - glm4
 - 如果还有常用的模型欢迎留言，我会继续添加。如果后续反响不错的话，我会添加更多的算子，比如bert架构的。
 - 其中glm4不是HF内置的模型，需要添加路径进入导入，具体参考示例，建议直接修改模型权重路径下的modeling_chatglm.py，之后直接可以使用AutoModelxxxx进行导入。以上模型我都解决了梯度累积偏差的bug，可以放心使用Trainer进行训练
+- 建议使用convert下的脚本将glm4转换为qwen2的格式，可以通过替换qwen2的kernel直接加速，非常方便。转换后速度比原始更快
 # 声明
 - 算loss的算子是直接copy的unsloth的，不是自己写的。做了简单修改，比如原始代码的device有问题，并在forward代码中进行简单题调整。其它算子都是自己写的，rope的翻转方式借鉴了unsloth
 
@@ -79,9 +80,9 @@ bash train.sh --deepspeed --replace_kernel
 - 训练日志和配置文件以及dataset都在“train_model”目录下，“plot.ipynb”查看详细训练loss
 ## Qwen2 0.5B训练loss
 - bs=256，micro_bs=16, seq_len=2048, zero2, 8*A800，训练加加速84%，比前面的无opeimizer还高。单卡显存54G
-- 不使用unsloth的loss算子，micro_bs=16，直接爆显存，我猜测是torch的corss_entropy的算子在计算过程中，存了大量中间结果，vocab_size太大，很占显存，而小尺寸的模型中间结果其实不怎么占显存，因此开不了大的batch_size。因此这个算子是真神！对小模型太关键了。
+- 不使用unsloth的loss算子，micro_bs=16，直接爆显存，只能开到8。
 - 对模型的所有Linear的参数重制，sft数据不mask user的content进行预训练测试，图中loss是从100步开始，1400步时loss下降，是因为到了第二个epoch
 ![Local Image](./imgs/qwen2-0.5B.png)
 ## llama3 1B训练loss
-- 配置和上面一样，micro_bs同样可以开到16。训练llama的时候，我发现loss有时非常异常，有一次训练最终收敛效果不太好，可以看看我的训练日志，图中是较好的一次了。主要是因为unsloth的loss算的误差有点大，可以在“09-test-kernel-speed.ipynb”中进行测试，最终的梯度差的比较多，如果崩了，建议小学习率或者换个种子。训练加速45%
+- 配置和上面一样，micro_bs同样可以开到16。训练llama的时候，我发现loss有时非常异常，有一次训练最终收敛效果不太好，可以看看我的训练日志，图中是较好的一次了。主要是因为unsloth的loss算的有些误差，可以在“09-test-kernel-speed.ipynb”中进行测试，最终的梯度差的比较多，如果崩了，建议小学习率或者换个种子。训练加速45%
 ![Local Image](./imgs/llama3-1B.png)
