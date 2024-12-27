@@ -79,7 +79,7 @@ bash train.sh --deepspeed --replace_kernel
 ```
 - 训练日志和配置文件以及dataset都在“train_model”目录下，“plot.ipynb”查看详细训练loss
 ## Qwen2 0.5B训练loss
-- bs=256，micro_bs=16, seq_len=2048, zero2, 8*A800，训练加加速84%，比前面的无opeimizer还高。单卡显存54G
+- bs=256，micro_bs=16, seq_len=2048, zero2, 8*A800，训练加速84%，比前面的无opeimizer还高。单卡显存54G
 - 不使用unsloth的loss算子，micro_bs=16，直接爆显存，只能开到8。
 - 对模型的所有Linear的参数重制，sft数据不mask user的content进行预训练测试，图中loss是从100步开始，1400步时loss下降，是因为到了第二个epoch
 ![Local Image](./imgs/qwen2-0.5B.png)
