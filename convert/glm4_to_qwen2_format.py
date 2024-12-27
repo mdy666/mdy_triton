@@ -71,9 +71,7 @@ print('start transform ........')
 for layer_idx in range(num_layers):
     if layer_idx == 0:
         qwen2_state_dict['model.embed_tokens.weight'] = torch_copy(glm_state_dict['transformer.embedding.word_embeddings.weight'])
-    if layer_idx == num_layers-1:
-        qwen2_state_dict['lm_head.weight'] = torch_copy(glm_state_dict['transformer.output_layer.weight'])
-        qwen2_state_dict['model.norm.weight'] = torch_copy(glm_state_dict['transformer.encoder.final_layernorm.weight'])
+
     qkv = glm_state_dict[f'transformer.encoder.layers.{layer_idx}.self_attention.query_key_value.weight']
     qk, v = qkv.split([(num_kv_head+num_q_head)*head_dim, num_kv_head*head_dim], 0)
     qk = qk.reshape(num_kv_head+num_q_head, head_dim, -1)
@@ -107,6 +105,10 @@ for layer_idx in range(num_layers):
     post_layernorm = glm_state_dict[f'transformer.encoder.layers.{layer_idx}.post_attention_layernorm.weight']
     qwen2_state_dict[f'model.layers.{layer_idx}.post_attention_layernorm.weight'] = torch_copy(post_layernorm)
 
+    if layer_idx == num_layers-1:
+        qwen2_state_dict['lm_head.weight'] = torch_copy(glm_state_dict['transformer.output_layer.weight'])
+        qwen2_state_dict['model.norm.weight'] = torch_copy(glm_state_dict['transformer.encoder.final_layernorm.weight'])
+        
     if ((layer_idx + 1) % num_layers_per_file == 0) or (layer_idx == num_layers - 1):
         chunk_filename = os.path.join(args.save_path, f"model-{str(file_id).zfill(5)}-of-{str(save_files).zfill(5)}.safetensors")
         print(chunk_filename)
@@ -140,7 +142,7 @@ if args.test:
     print(tokenizer.decode(input_ids[0]))
     print('输出：')
     print(tokenizer.decode(output[0][len(input_ids[0]):]))
-    
+
 '''
 输入：
 [gMASK] <sop> <|user|> 
