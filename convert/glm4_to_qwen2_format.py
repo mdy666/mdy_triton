@@ -16,10 +16,7 @@ python convert/glm4_to_qwen2_format.py \
    --test
 '''
 
-
-
 t1 = time.time()
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--model_path', type=str)
 parser.add_argument('--save_path', type=str)

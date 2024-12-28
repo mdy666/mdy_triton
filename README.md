@@ -34,7 +34,32 @@ from mdy_triton.replace_kernel.qwen2 import trigger
 # 接口
 - 所有加速算子的接口都写在了“mdy_triton.core”目录下的文件中，都写了注释，并配了example
 - 与huggingface中的模型代码无缝衔接，无需任何修改，直接使用，例如：
-![Local Image](./imgs/example.png)
+```python
+class _TritronFusedAddRMSNorm(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, hidden_states, old_residual, weight, eps=1e-6):
+        '''
+        input:
+            hidden_states: torch.Tensor, [bs, L, D], the output of attention
+            old_residual : torch.Tensor, [bs, L, D], the first residual at the begin of the decoder layer
+            weight       : nn.Parameters, [D], the weight of the RMSNorm
+            eps          : float, the eps of the RMSNorm
+        
+        output:
+            output       : torch.tensor, [bs, L, D], the input of MLP
+            new_residual : torch.tensor, [bs, L, D], the second residual at the middle of the decoder layer
+
+        example:
+          original code:
+            hidden_states = hidden_states + residual
+            residual = hidden_states
+            hidden_states = self.rmsnorm(hidden_states)
+
+          new code:
+            hidden_states, residual = triton_fused_add_norm(hidden_states, residual, self.rmsnorm.weight, self.rmsnorm.eps)
+        '''
+```
 - 目前个人完成的算子如下(速度测试在02-08的文件中，欢迎测试)：
     - triton_rmsnorm
         - forward加速10倍+，backward加速10倍+

@@ -7,7 +7,7 @@ from ..core.cross_entyopy_loss import fast_cross_entropy_loss
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from typing import Optional, Union, Tuple, List
 import torch
-from transformers import Qwen2ForCausalLM
+from transformers import Qwen2ForCausalLM, LlamaForCausalLM, Phi3ForCausalLM
 module = importlib.import_module('transformers.models.qwen2.modeling_qwen2')
 
 def rmsnorm_forward(self, hidden_state):
