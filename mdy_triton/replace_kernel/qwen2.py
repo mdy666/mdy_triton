@@ -10,6 +10,7 @@ import torch
 from transformers import Qwen2ForCausalLM, LlamaForCausalLM, Phi3ForCausalLM
 module = importlib.import_module('transformers.models.qwen2.modeling_qwen2')
 
+
 def rmsnorm_forward(self, hidden_state):
     # print(hidden_state.device, self.weight.device, self.weight.dtype)
     return triton_rmsnorm(hidden_state, self.weight, self.variance_epsilon)
