@@ -2,6 +2,8 @@
 ## 介绍
 - 一行“import”直接加速huggingface上模型的训练，其它代码无需任何更改。
 - 主要还是分享下triton的示例教学，unsloth的优化比我做得更好，如果大家代码熟练的话，还是建议去使用unsloth框架。训练再大些的模型（如14B及以上）建议上deepspeed或megatron。
+## 视频地址
+仓库介绍视频：[仓库介绍](https://www.bilibili.com/video/BV12XCbYGE2a/?vd_source=3f48cfc3f14eb5f74fc1e7e5005dbb67)
 ## packages
 - 建议使用最新的版本，否则可能会有问题
 ```bash
