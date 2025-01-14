@@ -238,10 +238,10 @@ def causal_conv1d_fn(
     x,
     weight,
     bias=None,
-    seq_idx=None,
-    initial_states=None,
-    return_final_states=False,
-    final_states_out=None,
+    seq_idx=None,# unuse
+    initial_states=None, # unuse
+    return_final_states=False,# unuse
+    final_states_out=None,# unuse
     activation=None,
 ):
     """
@@ -255,13 +255,9 @@ def causal_conv1d_fn(
 
     out: (batch, dim, seqlen)
     """
-    return _TritonCausalConv1dFunction.apply.apply(
+    return _TritonCausalConv1dFunction.apply(
         x,
         weight,
         bias,
-        None, # unuse
-        None,
-        None,
-        None,
         activation,
     )
