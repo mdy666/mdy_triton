@@ -261,3 +261,7 @@ def causal_conv1d_fn(
         bias,
         activation,
     )
+
+class causal_conv1d_triton:
+    causal_conv1d_fwd = causal_conv1d_fwd
+    causal_conv1d_bwd = causal_conv1d_bwd
