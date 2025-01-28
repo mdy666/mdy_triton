@@ -12,7 +12,7 @@ setup(
     install_requires=[  # 依赖项
         "transformers",
         "torch",
-        "triton",
+        # "triton",
         # 添加其他依赖项
     ],
     classifiers=[  # 分类信息
