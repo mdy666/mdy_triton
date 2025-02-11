@@ -1,4 +1,4 @@
-# 使用方式：
+# 使用方式： only for trl == 0.14
 # from replace_grpo_trainer import trigger
 
 import torch
@@ -310,14 +310,7 @@ def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=N
         return torch.stack(per_token_logps)
 
     num_logits_to_keep = completion_ids.size(1)  # we only need to compute the logits for the completion tokens
-    logits = model(prompt_completion_ids, num_logits_to_keep=num_logits_to_keep + 1).logits 
 
-    with torch.inference_mode():
-        if self.ref_model is not None:
-            ref_per_token_logps = get_per_token_logps(self.ref_model, prompt_completion_ids, num_logits_to_keep)
-        else:
-            with self.accelerator.unwrap_model(model).disable_adapter():
-                ref_per_token_logps = get_per_token_logps(model, prompt_completion_ids, num_logits_to_keep)
 
     # Compute the KL divergence between the model and the reference model
     # per_token_kl = torch.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1
@@ -379,6 +372,13 @@ def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=N
     # per_token_loss = torch.exp(per_token_logps - per_token_logps.detach()) * advantages.unsqueeze(1)
     # per_token_loss = -(per_token_loss - self.beta * per_token_kl)
 
+    with torch.inference_mode():
+        if self.ref_model is not None:
+            ref_per_token_logps = get_per_token_logps(self.ref_model, prompt_completion_ids, num_logits_to_keep)
+        else:
+            with self.accelerator.unwrap_model(model).disable_adapter():
+                ref_per_token_logps = get_per_token_logps(model, prompt_completion_ids, num_logits_to_keep)
+    logits = model(prompt_completion_ids, num_logits_to_keep=num_logits_to_keep + 1).logits
     per_token_loss, per_token_kl = triton_grpo_loss(logits,
                                                     ref_per_token_logps,
                                                     prompt_completion_ids,
