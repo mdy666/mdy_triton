@@ -12,7 +12,7 @@ from mdy_triton.core import fast_cross_entropy_loss
 
 import sys
 # 添加Megatron仓库的路径
-sys.path.append('/data/repo/Megatron-LM')
+sys.path.append('/sharedata/mdy/code/repo/Megatron-LM')
 module = importlib.import_module('megatron.core.fusions.fused_cross_entropy')
 module.get_tensor_model_parallel_group = lambda: None
 module.get_tensor_model_parallel_rank = dist.get_rank
@@ -168,9 +168,9 @@ def triton_entropy_loss(logits, labels, inplace=False):
 def test_speed(args):
     dtype = torch.bfloat16
     device = torch.device('cuda', args.rank)
-    bs = 4
-    seq_len = 1024
-    vocab_size = 80000
+    bs = 2
+    seq_len = 4096
+    vocab_size = 150000
     vocab_size = (vocab_size // args.world_size)*args.world_size
     part_vocab_size = vocab_size // args.world_size
     iters = 2000

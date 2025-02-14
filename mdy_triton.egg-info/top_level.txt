@@ -1,2 +1,1 @@
 mdy_triton
-others

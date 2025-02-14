@@ -187,6 +187,8 @@ class TritonAdamW(Optimizer):
         use_decoupled_grad=False,
         exp_avg_dtype=torch.float32,
         exp_avg_sq_dtype=torch.float32,
+        master_weight_dtype=torch.float32,
+
         **kwargs,
     ):
         if not 0.0 <= lr:

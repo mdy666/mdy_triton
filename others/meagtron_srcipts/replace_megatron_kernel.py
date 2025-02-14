@@ -308,6 +308,7 @@ class TritonAdamW(Optimizer):
         use_decoupled_grad=False,
         exp_avg_dtype=torch.float32,
         exp_avg_sq_dtype=torch.float32,
+        master_weight_dtype=torch.float32,
         **kwargs,
     ):
         if not 0.0 <= lr:
@@ -386,21 +387,18 @@ class TritonAdamW(Optimizer):
                 state = self.state[p]
                 # Exponential moving average of gradient  values
                 if state.get("exp_avg", None) is None:
-                    print('init exp_avg')
                     state["exp_avg"] = torch.zeros_like(p, dtype=self.name_to_dtype_map['exp_avg'])
                 assert state["exp_avg"].dtype == self.name_to_dtype_map['exp_avg'], state["exp_avg"].dtype
                 assert state["exp_avg"].is_contiguous()
 
                 # Exponential moving average of squared gradient values
                 if state.get("exp_avg_sq", None) is None:
-                    print('init exp_avg_sq')
                     state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.name_to_dtype_map['exp_avg_sq'])
                 assert state["exp_avg_sq"].dtype == self.name_to_dtype_map['exp_avg_sq'], state["exp_avg_sq"].dtype
                 assert state["exp_avg_sq"].is_contiguous()
                 
                 if self.master_weights:
                     if state.get('master_param', None) is None:
-                        print('init master_weight')
                         state["master_param"] = torch.empty_like(p, dtype=self.name_to_dtype_map['master_param'])
                         state["master_param"].copy_(p.clone().detach().float())
                     assert state["master_param"].dtype == self.name_to_dtype_map['master_param'], state["master_param"].dtype
@@ -441,7 +439,6 @@ class TritonAdamW(Optimizer):
         for idx, group in enumerate(self.param_groups):
             group['step'] += 1
             t = group['step']
-            print(t)
             if idx>= len(self.p_ptrs_groups):
                 continue
             beta1, beta2 = cast(Tuple[float, float], group["betas"])
@@ -669,22 +666,25 @@ class _FusedSiLUNoSplit(torch.autograd.Function):
         return dx, None
     
 
-
+import time 
 def swiglu_impl(x, bias, fp8_input_store=False):
-    return _FusedSiLUNoSplit.apply(x, order='gate-up')
+    print(1)
+    return _FusedSiLUNoSplit.apply(x, 'gate-up')
 
 def cross_entropy_loss(logits, labels):
+    print(2)
+    time.sleep(5)
     return _FastCrossEntropyLoss.apply(logits, labels, True)
 
 moudel_swiglu = importlib.import_module('megatron.core.fusions.fused_bias_swiglu')
 moudel_swiglu.bias_swiglu_impl = swiglu_impl
 
-module_ce = importlib.import_module('megatron.core.tensor_parallel.cross_entropy')
+module_ce = importlib.import_module('megatron.core.tensor_parallel')
 module_ce.vocab_parallel_cross_entropy = cross_entropy_loss
 module_fused_ce = importlib.import_module('megatron.core.fusions.fused_cross_entropy')
 module_fused_ce.fused_vocab_parallel_cross_entropy = cross_entropy_loss
 
-moudel_te_optimizer = importlib.import_module('transformer_engine.pytorch.optimizers.fused_adam')
+moudel_te_optimizer = importlib.import_module('transformer_engine.pytorch.optimizers')
 moudel_te_optimizer.FusedAdam = TritonAdamW
 
 trigger = None

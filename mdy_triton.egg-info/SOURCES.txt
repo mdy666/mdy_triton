@@ -20,7 +20,6 @@ mdy_triton/replace_kernel/mistral.py
 mdy_triton/replace_kernel/phi3.py
 mdy_triton/replace_kernel/qwen2.py
 mdy_triton/replace_kernel/qwen2_vl.py
-others/__init__.py
 others/causal_conv1d/__init__.py
 others/causal_conv1d/replace_conv1d_cuda.py
 others/causal_conv1d/triton_causal_conv1d.py

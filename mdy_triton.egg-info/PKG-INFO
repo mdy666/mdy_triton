@@ -1,4 +1,4 @@
-Metadata-Version: 2.2
+Metadata-Version: 2.1
 Name: mdy_triton
 Version: 0.1.0
 Summary: A package for core and replace_kernel functionality
@@ -11,14 +11,6 @@ Requires-Python: >=3.6
 Description-Content-Type: text/markdown
 Requires-Dist: transformers
 Requires-Dist: torch
-Dynamic: author
-Dynamic: author-email
-Dynamic: classifier
-Dynamic: description
-Dynamic: description-content-type
-Dynamic: requires-dist
-Dynamic: requires-python
-Dynamic: summary
 
 # 快速使用
 ## 介绍
