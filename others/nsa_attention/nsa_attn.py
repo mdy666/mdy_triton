@@ -61,9 +61,9 @@ class NsaAttention(torch.nn.Module):
     
     def forward(self, q, k, v):
         cmp_o, lse, cmp_k = self.compress_attn(q, k, v)
-        # _, indices = self.select_for_fwd(q, cmp_k, lse)
-        # select_o = self.select_attn(q, k, v, select_indices=indices)
-        select_o = cmp_o
+        _, indices = self.select_for_fwd(q, cmp_k, lse)
+        select_o = self.select_attn(q, k, v, select_indices=indices)
+        # select_o = cmp_o
         window_o = self.window_attn(q, k, v) # fa3默认返回lse
         if isinstance(window_o, Tuple):
             window_o = window_o[0]
