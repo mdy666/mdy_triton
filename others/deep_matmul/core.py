@@ -110,7 +110,7 @@ def deep_matmul(a, b, out=None):
     deep_gemm.gemm_fp8_fp8_bf16_nt(a_fp8, y_fp8, out)
     return out
 
-def deep_matmul(a_list, b_list, m_split, out=None):
+def deep_group_matmul(a_list, b_list, m_split, out=None):
     a = a_list[0]
     b = b_list[0]
     assert a.dim() == 2 and a.dtype == torch.bfloat16
