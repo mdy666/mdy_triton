@@ -11,7 +11,7 @@ except:
     from flash_attn import flash_attn_func
 
 from compress_attn import CompressAttn
-from select_attn import select_attn, select_for_fwd
+from select_attn import select_attn, select_for_fwd_bwd
 
 # class CompressKV(torch.nn.Module):
 #     def __init__(self, head_dim, kernel_size, stride):
@@ -41,7 +41,7 @@ class NsaAttention(torch.nn.Module):
         assert kernel_size % stride == 0 and select_size % kernel_size == 0
 
         self.compress_attn = CompressAttn(qk_head_dim, v_head_dim, kernel_size, stride)
-        self.select_for_fwd = partial(select_for_fwd, 
+        self.select_for_fwd_bwd = partial(select_for_fwd_bwd, 
                                       kernel_size=self.kernel_size, 
                                       stride=self.stride, 
                                       select_size=self.select_size, 
@@ -59,17 +59,20 @@ class NsaAttention(torch.nn.Module):
                                                torch.nn.Sigmoid())
 
     
-    def forward(self, q, k, v):
-        cmp_o, lse, cmp_k = self.compress_attn(q, k, v)
-        _, indices = self.select_for_fwd(q, cmp_k, lse)
-        select_o = self.select_attn(q, k, v, select_indices=indices)
-        # select_o = cmp_o
-        window_o = self.window_attn(q, k, v) # fa3默认返回lse
+    def forward(self, q, k, v, **kwargs):
+        cmp_o, lse, cmp_k = self.compress_attn(q, k, v) # 17ms
+        
+        _, fwd_ind, bwd_ind = self.select_for_fwd_bwd(q, cmp_k, lse) # 14ms
+        # return
+        select_o = self.select_attn(q, k, v, fwd_ind=fwd_ind, bwd_ind=bwd_ind,**kwargs) # 31ms
+        window_o = self.window_attn(q, k, v) # 2.7ms
+        # return
         if isinstance(window_o, Tuple):
             window_o = window_o[0]
-        weight = self.attn_weight(q)
+        weight = self.attn_weight(q) # 1ms
+        # return 
         combine_o = cmp_o * weight[..., 0].unsqueeze(-1) \
                     + select_o * weight[..., 1].unsqueeze(-1) \
-                    + window_o * weight[..., 2].unsqueeze(-1)
+                    + window_o * weight[..., 2].unsqueeze(-1) # 6ms
         return combine_o
 
