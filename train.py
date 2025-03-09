@@ -1,13 +1,22 @@
-import torch
-import torch.distributed as dist
-from train_model.utils import DistributedDS, MyTrainer, print_rank0
-from transformers import TrainingArguments, Trainer, AutoTokenizer, AutoModelForCausalLM, AutoConfig
 import time
 import argparse
 import sys
 import os
 import json
 import random
+
+import torch
+import torch.distributed as dist
+from train_model.utils import DistributedDS, MyTrainer, print_rank0
+from transformers import TrainingArguments, Trainer, AutoTokenizer, AutoModelForCausalLM, AutoConfig
+
+
+def print_rank0(*args):
+    if torch.distributed.is_initialized():
+        if torch.distributed.get_rank() == 0:
+            print(*args)
+    else:
+        print(*args)
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -39,8 +48,7 @@ if __name__ == '__main__':
     time.sleep(3)
 
     args = get_args()
-    if args.replace_kernel:
-        from mdy_triton.replace_kernel import *
+        
     print_rank0(args.data_paths)
     print_rank0(sys.path)
     print_rank0(args)

@@ -11,7 +11,8 @@ except:
     from flash_attn import flash_attn_func
 
 from compress_attn import CompressAttn
-from select_attn import select_attn, select_for_fwd_bwd
+from select_attn_v3 import select_attn, select_for_fwd_bwd
+from fla.ops.nsa import parallel_nsa
 
 # class CompressKV(torch.nn.Module):
 #     def __init__(self, head_dim, kernel_size, stride):
@@ -50,6 +51,10 @@ class NsaAttention(torch.nn.Module):
         self.select_attn = partial(select_attn, 
                                    select_size=self.select_size, 
                                    sm_scale=self.sm_scale)
+        
+        # self.select_attn = partial(parallel_nsa, 
+        #                            block_size=self.select_size, 
+        #                            scale=self.sm_scale)
         self.window_attn = partial(flash_attn_func, 
                                    softmax_scale=self.sm_scale, 
                                    causal=True, 
@@ -65,6 +70,7 @@ class NsaAttention(torch.nn.Module):
         _, fwd_ind, bwd_ind = self.select_for_fwd_bwd(q, cmp_k, lse) # 14ms
         # return
         select_o = self.select_attn(q, k, v, fwd_ind=fwd_ind, bwd_ind=bwd_ind,**kwargs) # 31ms
+        # select_o = self.select_attn(q, k, v, fwd_ind.transpose(1,2).contiguous())
         window_o = self.window_attn(q, k, v) # 2.7ms
         # return
         if isinstance(window_o, Tuple):

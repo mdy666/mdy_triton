@@ -245,57 +245,71 @@ def blcok_compress(x, weight, pe, stride):
     return _BlockCompress.apply(x, weight, pe, stride)
 
 
-# @triton.autotune([triton.Config({'BLOCK_SIZE_N': bsn, 'BLOCK_SIZE_M': bsm}, num_stages=ns, num_warps=nw)
-#                  for bsm in [32, 64]
-#                  for bsn in [64, 128]
-#                  for ns in [1, 2, 3, 4, 5]
+# @triton.autotune([triton.Config({'BLOCK_N': bsn, 'BLOCK_M': bsm}, num_stages=ns, num_warps=nw)
+#                  for bsm in [32, 64, 128]
+#                  for bsn in [32, 64, 128]
+#                  for ns in [1, 2, 4,]
 #                  for nw in [2, 4, 8]
-#                  ], key=['N', "M"])
+#                  ], key=['D1', "D2",'VD'])
 @triton.jit
-def _fwd_kernel(Q, K, V, O, LSE, 
-                q_stride_b, q_stride_n, q_stride_h, q_stride_d,
-                k_stride_b, k_stride_m, k_stride_h, k_stride_d,
-                v_stride_b, v_stride_m, v_stride_h, v_stride_d,
-                o_stride_b, o_stride_n, o_stride_h, o_stride_d,
-                lse_stride_b, lse_stride_h, lse_stride_n,
-                sm_scale, kernel_size, stride,
-                B, N, M, QH, KH, 
-                D1: tl.constexpr, D2: tl.constexpr, VD: tl.constexpr, 
-                BLOCK_SIZE_N: tl.constexpr=64, BLOCK_SIZE_M: tl.constexpr=128):
+def _fwd_kernel(Q, 
+                K, 
+                V, 
+                O, 
+                LSE, 
+                sm_scale, 
+                kernel_size, 
+                stride,
+                N:tl.constexpr, 
+                M:tl.constexpr, 
+                QH:tl.constexpr, 
+                KH:tl.constexpr, 
+                D1: tl.constexpr, 
+                D2: tl.constexpr, 
+                VD: tl.constexpr, 
+                BLOCK_N: tl.constexpr=64, 
+                BLOCK_M: tl.constexpr=128
+                ):
 
-    off_b = tl.cast(tl.program_id(0), tl.int64)
-    off_qh = tl.cast(tl.program_id(1), tl.int64)
-    start_n = tl.cast(tl.program_id(2), tl.int64) * BLOCK_SIZE_N
-    off_n = start_n + tl.arange(0, BLOCK_SIZE_N)
+    off_b = tl.program_id(0)
+    off_qh = tl.program_id(1)
+    start_n = tl.program_id(2) * BLOCK_N
     off_kh = off_qh // (QH // KH)
 
-    Q += off_b * q_stride_b + off_qh * q_stride_h
-    K += off_b * k_stride_b + off_kh * k_stride_h 
-    V += off_b * v_stride_b + off_kh * v_stride_h
-    O += off_b * o_stride_b + off_qh * o_stride_h
-    LSE += off_b * lse_stride_b + off_qh * lse_stride_h
+    bos = off_b * N
+    D = D1 + D2
 
-    q = tl.load(Q + off_n[:, None] * q_stride_n + tl.arange(0, D1)[None, :], mask=off_n[:, None] < N, other=0.)
+    K += (bos * KH + off_kh) * D
+    V += (bos * KH + off_kh) * VD
+    Q += (bos * QH + off_qh) * D
+    O += (bos * QH + off_qh) * VD
+
+    q_ptrs = tl.make_block_ptr(Q, (N, D), (QH * D, 1), (start_n, 0), (BLOCK_N, D1), (1,0))
+    k_ptrs = tl.make_block_ptr(K, (D, M), (1, KH * D), (0, 0), (D1, BLOCK_M), (0,1))
+    v_ptrs = tl.make_block_ptr(V, (N, VD), (KH * VD, 1), (0, 0), (BLOCK_M, VD), (1,0))
+    q = tl.load(q_ptrs, boundary_check=(0,1))
     if D2 > 0:
-        q2 = tl.load(Q + off_n[:, None] * q_stride_n + tl.arange(0, D2)[None, :] + D1, mask=off_n[:, None] < N, other=0.)
+        q_ptrs2 = tl.make_block_ptr(Q, (N, D), (QH * D, 1), (start_n, D1), (BLOCK_N, D2), (1,0))
+        k_ptrs2 = tl.make_block_ptr(K, (D, M), (1, KH * D), (D1, 0), (D2, BLOCK_M), (0,1))
+        q2 = tl.load(q_ptrs2, boundary_check=(0,1))
 
-    m_i = tl.zeros([BLOCK_SIZE_N], dtype=tl.float32) - float("inf")
-    l_i = tl.zeros([BLOCK_SIZE_N], dtype=tl.float32)
-    acc = tl.zeros([BLOCK_SIZE_N, VD], dtype=tl.float32)
+    m_i = tl.zeros([BLOCK_N], dtype=tl.float32) - float("inf")
+    l_i = tl.zeros([BLOCK_N], dtype=tl.float32)
+    acc = tl.zeros([BLOCK_N, VD], dtype=tl.float32)
 
-    block_idx = tl.arange(0, BLOCK_SIZE_M)
-    for start_kv_idx in range(kernel_size-1, start_n + BLOCK_SIZE_N, BLOCK_SIZE_M * stride):
-        k = tl.load(K + block_idx[None, :] * k_stride_m + tl.arange(0, D1)[:, None], mask=block_idx[None, :] < M, other=0.)
+    q_idx = start_n + tl.arange(0, BLOCK_N)
+    k_idx = tl.arange(0, BLOCK_M) * stride + kernel_size - 1
+    for start_kv_idx in range(kernel_size-1, start_n + BLOCK_N, BLOCK_M * stride):
+        k = tl.load(k_ptrs, boundary_check=(0, 1))
+        v = tl.load(v_ptrs, boundary_check=(0, 1))
         attn_score = tl.dot(q, k)
         if D2>0:
-            k2 = tl.load(K + block_idx[None, :] * k_stride_m + tl.arange(0, D2)[:, None] + D1, mask=block_idx[None, :] < M, other=0.)
+            k2 = tl.load(k_ptrs2, boundary_check=(0, 1))
             attn_score = tl.dot(q2, k2, attn_score)
 
-        k_idx = block_idx * stride + kernel_size - 1
-        attn_score = tl.where(off_n[:, None] >= k_idx[None, :], attn_score * sm_scale, float('-inf'))
+        attn_score = tl.where(q_idx[:, None] >= k_idx[None, :], attn_score * sm_scale, float('-inf'))
 
-        m_ij = tl.max(attn_score, axis=1)
-        new_m_i = tl.maximum(m_i, m_ij)
+        new_m_i = tl.maximum(m_i, tl.max(attn_score, axis=1))
         alpha = tl.exp(m_i - new_m_i)
 
         exp_attn_score = tl.exp(attn_score - new_m_i[:, None])
@@ -303,19 +317,24 @@ def _fwd_kernel(Q, K, V, O, LSE,
         l_i = l_i * alpha + tl.sum(exp_attn_score, axis=-1)
         acc = acc * alpha[:, None]
 
-        v = tl.load(V + block_idx[:, None] * v_stride_m + tl.arange(0, VD)[None, :], mask=block_idx[:, None] < M, other=0.)
         acc = tl.dot(exp_attn_score.to(v.dtype), v, acc=acc)
 
         m_i = new_m_i
-        block_idx += BLOCK_SIZE_M
+        k_ptrs = tl.advance(k_ptrs, (0, BLOCK_M))
+        v_ptrs = tl.advance(v_ptrs, (BLOCK_M, 0))
+        k_idx += BLOCK_M * stride
+        if D2 > 0:
+            k_ptrs2 = tl.advance(k_ptrs2, (0, BLOCK_M))
 
     acc /= l_i[:, None]
     lse = m_i + tl.log(l_i)
     if start_n == 0:
-        acc = tl.where(off_n[:, None]>=(kernel_size-1), acc, 0)
-        lse = tl.where(off_n>=(kernel_size-1), lse, 0)
-    tl.store(O + off_n[:, None] * o_stride_n + tl.arange(0, VD)[None, :], acc, mask=off_n[:, None] < N)   
-    tl.store(LSE + off_n * lse_stride_n, lse, mask=off_n < N)
+        acc = tl.where(q_idx[:, None]>=(kernel_size-1), acc, 0)
+        lse = tl.where(q_idx>=(kernel_size-1), lse, 0)
+
+    o_ptrs = tl.make_block_ptr(O, (N, VD), (QH * VD, 1), (start_n, 0), (BLOCK_N, VD), (1,0))
+    tl.store(o_ptrs, acc.to(o_ptrs.dtype.element_ty), boundary_check=(0, 1))   
+    tl.store(LSE + off_b * QH * N + off_qh * N + q_idx, lse, mask=q_idx < N)
 
 
 # @triton.autotune([triton.Config({'BLOCK_SIZE_N': bsn}, num_stages=ns, num_warps=nw)
@@ -355,60 +374,74 @@ def _bwd_preprocess(O,DO,Delta,
 #                  for nw in [4, 8]
 #                  ], key=['N', "M"])
 @triton.jit
-def _dkv_kernel(DK, DV, DO, 
-                Q, K, V, 
-                Lse, Delta,
-                q_stride_b, q_stride_n, q_stride_h, q_stride_d,
-                k_stride_b, k_stride_m, k_stride_h, k_stride_d,
-                v_stride_b, v_stride_m, v_stride_h, v_stride_d,
-                dk_stride_b, dk_stride_m, dk_stride_h, dk_stride_d,
-                dv_stride_b, dv_stride_m, dv_stride_h, dv_stride_d,
-                do_stride_b, do_stride_n, do_stride_h, do_stride_d,
-                lse_stride_b, lse_stride_h, lse_stride_n,
-                sm_scale, kernel_size, stride,
-                B, N, M, QH, KH, 
-                D1: tl.constexpr, D2: tl.constexpr, VD: tl.constexpr, 
-                BLOCK_SIZE_N: tl.constexpr=64, BLOCK_SIZE_M: tl.constexpr=64
+def _dkv_kernel(DK, 
+                DV, 
+                DO, 
+                Q, 
+                K, 
+                V, 
+                Lse, 
+                Delta,
+                sm_scale, 
+                kernel_size, 
+                stride,
+                N, 
+                M, 
+                QH: tl.constexpr, 
+                KH: tl.constexpr, 
+                D1: tl.constexpr, 
+                D2: tl.constexpr, 
+                VD: tl.constexpr, 
+                BLOCK_SIZE_N: tl.constexpr=64, 
+                BLOCK_SIZE_M: tl.constexpr=64
                 ):
-    start_m = tl.cast(tl.program_id(0), tl.int64) * BLOCK_SIZE_M
-    off_m = start_m + tl.arange(0, BLOCK_SIZE_M)
-    off_b = tl.cast(tl.program_id(1), tl.int64)
-    off_qh = tl.cast(tl.program_id(2), tl.int64)
-    
+    start_m = tl.program_id(0) * BLOCK_SIZE_M
+    off_b = tl.program_id(1)
+    off_qh = tl.program_id(2)
     off_kh = off_qh // (QH // KH)
 
-    Q += off_b * q_stride_b + off_qh * q_stride_h
-    K += off_b * k_stride_b + off_kh * k_stride_h 
-    V += off_b * v_stride_b + off_kh * v_stride_h
-    DK += off_b * dk_stride_b + off_qh * dk_stride_h 
-    DV += off_b * dv_stride_b + off_qh * dv_stride_h
-    DO += off_b * do_stride_b + off_qh * do_stride_h
-    Lse += off_b * lse_stride_b + off_qh * lse_stride_h
-    Delta += off_b * lse_stride_b + off_qh * lse_stride_h
+    D = D1 + D2
 
-    k = tl.load(K + off_m[None, :] * k_stride_m + tl.arange(0, D1)[:, None], mask=off_m[None, :] < M, other=0.)
-    v = tl.load(V + off_m[None, :] * v_stride_m + tl.arange(0, VD)[:, None], mask=off_m[None, :] < M, other=0.)
+    Q += (off_b * N * QH + off_qh) * D 
+    DO += (off_b * N * QH + off_qh) * VD
+    K += (off_b * M * KH + off_kh) * D
+    V += (off_b * M * KH + off_kh) * VD
+    DK += (off_b * M * QH + off_qh) * D
+    DV += (off_b * M * QH + off_qh) * VD
+    
+    Lse += (off_b * QH + off_qh) * N
+    Delta += (off_b * QH + off_qh) * N
+
+    start_n = start_m * stride + kernel_size - 1
+    k_ptrs = tl.make_block_ptr(K, (D, M), (1, KH * D), (0, start_m), (D1, BLOCK_SIZE_M), (0,1))
+    v_ptrs = tl.make_block_ptr(V, (VD, M), (1, KH * VD), (0, start_m), (VD, BLOCK_SIZE_M), (0,1))
+    q_ptrs = tl.make_block_ptr(Q, (N, D), (QH * D, 1), (start_n, 0), (BLOCK_SIZE_N, D1), (1,0))
+    do_ptrs = tl.make_block_ptr(DO, (N, VD), (QH * VD, 1), (start_n, 0), (BLOCK_SIZE_N, VD), (1,0))
+    k = tl.load(k_ptrs, boundary_check=(0,1))
+    v = tl.load(v_ptrs, boundary_check=(0,1))
     acc_dk = tl.zeros((BLOCK_SIZE_M, D1), dtype=tl.float32)
     acc_dv = tl.zeros((BLOCK_SIZE_M, VD), dtype=tl.float32)
-
     if D2 > 0:
-        k2 = tl.load(K + off_m[None, :] * k_stride_m + tl.arange(0, D2)[:, None] + D1, mask=off_m[None, :] < M, other=0.)
+        k_ptrs2 = tl.load(K, (D, M), (1, KH * D), (D1, start_m), (D2, BLOCK_SIZE_M), (1,0))
+        q_ptrs2 = tl.make_block_ptr(Q, (N, D), (QH * D, 1), (start_n, D1), (BLOCK_SIZE_N, D2), (1,0))
+        k2 = tl.load(k_ptrs2, boundary_check=(0,1))
         acc_dk2 = tl.zeros((BLOCK_SIZE_M, D2), dtype=tl.float32)
-    k_idx = off_m * stride + kernel_size - 1
-    for start_q_idx in range(start_m * stride + kernel_size - 1, N, BLOCK_SIZE_N):
-        off_n = start_q_idx + tl.arange(0, BLOCK_SIZE_N)
-        q = tl.load(Q + off_n[:, None] * q_stride_n + tl.arange(0, D1), mask=off_n[:, None] < N, other=0.)
-        do = tl.load(DO + off_n[:, None] * do_stride_n + tl.arange(0, VD), mask=off_n[:, None] < N, other=0.)
-        lse = tl.load(Lse + off_n, mask=off_n < N, other=0.)
-        delta = tl.load(Delta + off_n, mask=off_n < N, other=0.)
+
+    k_idx = (start_m + tl.arange(0, BLOCK_SIZE_M)) * stride + kernel_size - 1
+    for start_q_idx in range(start_n, N, BLOCK_SIZE_N):
+        q_idx =  start_q_idx + tl.arange(0, BLOCK_SIZE_N)
+        q = tl.load(q_ptrs, boundary_check=(0, 1))
+        do = tl.load(do_ptrs, boundary_check=(0, 1))
+        lse = tl.load(Lse + q_idx, mask=q_idx < N)
+        delta = tl.load(Delta + q_idx, mask=q_idx < N)
 
         attn_score = tl.dot(q, k) 
 
         if D2 > 0:
-            q2 = tl.load(Q + off_n[:, None] * q_stride_n + tl.arange(0, D2) + D1, mask=off_n[:, None] < N, other=0.)
+            q2 = tl.load(q_ptrs2, boundary_check=(0, 1))
             attn_score = tl.dot(q2, k2, attn_score)
 
-        attn_score = tl.where(off_n[:, None] >= k_idx[None, :], attn_score, float('-inf'))
+        attn_score = tl.where(q_idx[:, None] >= k_idx[None, :], attn_score, float('-inf'))
         p = tl.exp(attn_score * sm_scale - lse[:, None])
         
         acc_dv = tl.dot(tl.trans(p, 1, 0).to(do.dtype), do, acc_dv)
@@ -416,15 +449,21 @@ def _dkv_kernel(DK, DV, DO,
         dp = tl.dot(do, v)
         ds = p * (dp - delta[:, None]) * sm_scale
 
-
         acc_dk = tl.dot(tl.trans(ds, 1, 0).to(q.dtype), q, acc_dk)
         if D2 > 0:
             acc_dk2 = tl.dot(tl.trans(ds, 1, 0).to(q.dtype), q2, acc_dk2)
+            q_ptrs2 = tl.advance(q_ptrs2, (BLOCK_SIZE_N, 0))
+        q_ptrs = tl.advance(q_ptrs, (BLOCK_SIZE_N, 0))
+        do_ptrs = tl.advance(do_ptrs, (BLOCK_SIZE_N, 0))
 
-    tl.store(DK + off_m[:, None] * dk_stride_m + tl.arange(0, D1)[None, :], acc_dk, mask=off_m[:, None] < M)
-    tl.store(DV + off_m[:, None] * dv_stride_m + tl.arange(0, VD)[None, :], acc_dv, mask=off_m[:, None] < M)
+    dk_ptrs = tl.make_block_ptr(DK, (M, D), (QH * D, 1), (start_m, 0), (BLOCK_SIZE_M, D1), (1,0))
+    dv_ptrs = tl.make_block_ptr(DV, (M, VD), (QH * VD, 1), (start_m, 0), (BLOCK_SIZE_M, VD), (1,0))
+    tl.store(dk_ptrs, acc_dk.to(dk_ptrs.dtype.element_ty), boundary_check=(0,1))
+    tl.store(dv_ptrs, acc_dv.to(dk_ptrs.dtype.element_ty), boundary_check=(0,1))
     if D2 > 0:
-        tl.store(DK + off_m[:, None] * dk_stride_m + tl.arange(0, D2)[None, :] + D1, acc_dk2, mask=off_m[:, None] < M)
+        dk_ptrs2 = tl.make_block_ptr(DK, (M, D), (QH * D, 1), (start_m, D1), (BLOCK_SIZE_M, D2), (1,0))
+        tl.store(dk_ptrs2, acc_dk2.to(dk_ptrs.dtype.element_ty), boundary_check=(0,1))
+
 
 
 # @triton.autotune([triton.Config({'BLOCK_SIZE_N': bsn, 'BLOCK_SIZE_M': bsm}, num_stages=ns, num_warps=nw)
@@ -434,55 +473,69 @@ def _dkv_kernel(DK, DV, DO,
 #                  for nw in [4, 8]
 #                  ], key=['N', "M"])
 @triton.jit
-def _dq_kernel(DQ, DO, 
-                Q, K, V, 
-                Lse, Delta,
-                q_stride_b, q_stride_n, q_stride_h, q_stride_d,
-                k_stride_b, k_stride_m, k_stride_h, k_stride_d,
-                v_stride_b, v_stride_m, v_stride_h, v_stride_d,
-                do_stride_b, do_stride_n, do_stride_h, do_stride_d,
-                lse_stride_b, lse_stride_h, lse_stride_n,
-                sm_scale,  kernel_size, stride,
-                B, N, M, QH, KH, 
-                D1: tl.constexpr, D2: tl.constexpr, VD: tl.constexpr, 
-                BLOCK_SIZE_N: tl.constexpr=64, BLOCK_SIZE_M: tl.constexpr=64
+def _dq_kernel( DQ, 
+                DO, 
+                Q, 
+                K, 
+                V, 
+                Lse, 
+                Delta,
+                sm_scale, 
+                kernel_size, 
+                stride,
+                N,
+                M, 
+                QH, 
+                KH, 
+                D1: tl.constexpr, 
+                D2: tl.constexpr, 
+                VD: tl.constexpr, 
+                BLOCK_SIZE_N: tl.constexpr=64, 
+                BLOCK_SIZE_M: tl.constexpr=64
                 ):
-    start_n = tl.cast(tl.program_id(0), tl.int64) * BLOCK_SIZE_N
-    off_n = start_n + tl.arange(0, BLOCK_SIZE_N)
-    off_b = tl.cast(tl.program_id(1), tl.int64)
-    off_qh = tl.cast(tl.program_id(2), tl.int64)
-    
+    start_n = tl.program_id(0) * BLOCK_SIZE_N
+    q_idx = start_n + tl.arange(0, BLOCK_SIZE_N)
+    off_b = tl.program_id(1)
+    off_qh = tl.program_id(2)
     off_kh = off_qh // (QH // KH)
 
-    Q += off_b * q_stride_b + off_qh * q_stride_h
-    K += off_b * k_stride_b + off_kh * k_stride_h 
-    V += off_b * v_stride_b + off_kh * v_stride_h
-    DQ += off_b * q_stride_b + off_qh * q_stride_h
-    DO += off_b * do_stride_b + off_qh * do_stride_h
-    Lse += off_b * lse_stride_b + off_qh * lse_stride_h
-    Delta += off_b * lse_stride_b + off_qh * lse_stride_h
+    D = D1 + D2
 
-    q = tl.load(Q + off_n[:, None] * q_stride_n + tl.arange(0, D1), mask=off_n[:, None] < N, other=0.)
+    Q += (off_b * N * QH + off_qh) * D 
+    DQ += (off_b * N * QH + off_qh) * D 
+    DO += (off_b * N * QH + off_qh) * VD
+    K += (off_b * M * KH + off_kh) * D
+    V += (off_b * M * KH + off_kh) * VD
+    Lse += (off_b * QH + off_qh) * N
+    Delta += (off_b * QH + off_qh) * N
+    
+    # start_m = kernel_size - 1
+    k_ptrs = tl.make_block_ptr(K, (D, M), (1, KH * D), (0, 0), (D1, BLOCK_SIZE_M), (0,1))
+    v_ptrs = tl.make_block_ptr(V, (VD, M), (1, KH * VD), (0, 0), (VD, BLOCK_SIZE_M), (0,1))
+    q_ptrs = tl.make_block_ptr(Q, (N, D), (QH * D, 1), (start_n, 0), (BLOCK_SIZE_N, D1), (1,0))
+    do_ptrs = tl.make_block_ptr(DO, (N, VD), (QH * VD, 1), (start_n, 0), (BLOCK_SIZE_N, VD), (1,0))
+
+    q = tl.load(q_ptrs, boundary_check=(0,1))
+    do = tl.load(do_ptrs, boundary_check=(0,1))
+    lse = tl.load(Lse + q_idx, mask=q_idx < N, other=0.)
+    delta = tl.load(Delta + q_idx, mask=q_idx < N, other=0.)
     acc_dq = tl.zeros((BLOCK_SIZE_N, D1), dtype=tl.float32)
-    do = tl.load(DO + off_n[:, None] * do_stride_n + tl.arange(0, VD), mask=off_n[:, None] < N, other=0.)
-    lse = tl.load(Lse + off_n, mask=off_n < N, other=0.)
-    delta = tl.load(Delta + off_n, mask=off_n < N, other=0.)
     if D2 > 0:
-        q2 = tl.load(Q + off_n[:, None] * q_stride_n + tl.arange(0, D2) + D1, mask=off_n[:, None] < N, other=0.)
+        k_ptrs2 = tl.make_block_ptr(K, (D, M), (1, KH * D), (D1, 0), (D2, BLOCK_SIZE_M), (0,1))
+        q_ptrs2 = tl.make_block_ptr(Q, (N, D), (QH * D, 1), (start_n, D1), (BLOCK_SIZE_N, D2), (1,0))
+        q2 = tl.load(q_ptrs2, boundary_check=(0,1))
         acc_dq2 = tl.zeros((BLOCK_SIZE_N, D2), dtype=tl.float32)
 
-    off_m = tl.arange(0, BLOCK_SIZE_M)
-    for start_kv_idx in range(kernel_size-1, start_n + BLOCK_SIZE_N, BLOCK_SIZE_M * stride):
-
-        k = tl.load(K + off_m[None, :] * k_stride_m + tl.arange(0, D1)[:, None], mask=off_m[None, :] < M, other=0.)
-        v = tl.load(V + off_m[None, :] * v_stride_m + tl.arange(0, VD)[:, None], mask=off_m[None, :] < M, other=0.)
+    k_idx = tl.arange(0, BLOCK_SIZE_M) * stride + kernel_size - 1
+    for start_kv_idx in range(kernel_size - 1, start_n + BLOCK_SIZE_N, BLOCK_SIZE_M * stride):
+        k = tl.load(k_ptrs, boundary_check=(0,1))
+        v = tl.load(v_ptrs, boundary_check=(0,1))
         attn_score = tl.dot(q, k) 
         if D2 > 0:
-            k2 = tl.load(K + off_m[None, :] * k_stride_m + tl.arange(0, D2)[:, None] + D1, mask=off_m[None, :] < M, other=0.)
+            k2 = tl.load(k_ptrs2, boundary_check=(0,1))
             attn_score = tl.dot(q2, k2, attn_score)
 
-        k_idx = off_m * stride + kernel_size - 1
-        attn_score = tl.where(off_n[:, None] >= k_idx[None, :], attn_score, float('-inf'))
+        attn_score = tl.where(q_idx[:, None] >= k_idx[None, :], attn_score, float('-inf'))
         p = tl.exp(attn_score * sm_scale - lse[:, None])
 
         dp = tl.dot(do, v)
@@ -491,12 +544,16 @@ def _dq_kernel(DQ, DO,
         acc_dq = tl.dot(ds.to(k.dtype), tl.trans(k, 1, 0), acc_dq)
         if D2 > 0:
             acc_dq2 = tl.dot(ds.to(k.dtype), tl.trans(k2, 1, 0), acc_dq2)
-        off_m += BLOCK_SIZE_M
+            k_ptrs2 = tl.advance(k_ptrs2, (0, BLOCK_SIZE_M))
+        k_idx += BLOCK_SIZE_M * stride
+        k_ptrs = tl.advance(k_ptrs, (0, BLOCK_SIZE_M))
+        v_ptrs = tl.advance(v_ptrs, (0, BLOCK_SIZE_M))
 
-    tl.store(DQ + off_n[:, None] * q_stride_n + tl.arange(0, D1)[None, :], acc_dq, mask=off_n[:, None] < N)
+    dq_ptrs = tl.make_block_ptr(DQ, (N, D), (QH * D, 1), (start_n, 0), (BLOCK_SIZE_N, D1), (1,0))
+    tl.store(dq_ptrs, acc_dq.to(dq_ptrs.dtype.element_ty), boundary_check=(0, 1))
     if D2 > 0:
-        tl.store(DQ + off_n[:, None] * q_stride_n + tl.arange(0, D2)[None, :] + D1, acc_dq2, mask=off_n[:, None] < N)
-
+        dq_ptrs2 = tl.make_block_ptr(DQ, (N, D), (QH * D, 1), (start_n, D1), (BLOCK_SIZE_N, D2), (1,0))
+        tl.store(dq_ptrs2, acc_dq2.to(dq_ptrs.dtype.element_ty), boundary_check=(0, 1))
 
 
 class _attention(torch.autograd.Function):
@@ -521,19 +578,14 @@ class _attention(torch.autograd.Function):
         o = torch.empty(B, N, QH, VD, device=q.device, dtype=q.dtype)
         # o[:, :kernel_size-1] = 0.
         lse = torch.empty(B, QH, N, dtype=torch.float32, device=q.device,)
-        grid = lambda meta: (B, QH, triton.cdiv(N, meta['BLOCK_SIZE_N']))
+        grid = lambda meta: (B, QH, triton.cdiv(N, meta['BLOCK_N']))
         if D == 192:
-            kwargs = {"BLOCK_SIZE_N": 64, "BLOCK_SIZE_M": 32, "num_warps": 4, "num_stages": 2}
+            kwargs = {"BLOCK_N": 64, "BLOCK_M": 32, "num_warps": 4, "num_stages": 2}
         else:
-            kwargs = {"BLOCK_SIZE_N": 64, "BLOCK_SIZE_M": 32, "num_warps": 4, "num_stages": 3}
+            kwargs = {"BLOCK_N": 64, "BLOCK_M": 32, "num_warps": 4, "num_stages": 1}
         _fwd_kernel[grid](q, k, v, o, lse,
-                          *q.stride(),
-                          *k.stride(),
-                          *v.stride(),
-                          *o.stride(),
-                          *lse.stride(),
                           sm_scale, kernel_size, stride,
-                          B, N, M, QH, KH, 
+                          N, M, QH, KH, 
                           D1, D2, VD,
                           **kwargs
                           )
@@ -571,19 +623,11 @@ class _attention(torch.autograd.Function):
         _dkv_kernel[grid](dk, dv, do, 
                           q, k, v,
                           lse, delta,
-                          *q.stride(), # dq和q一样
-                          *k.stride(),
-                          *v.stride(),
-                          *dk.stride(),
-                          *dv.stride(),
-                          *do.stride(), # do和o一样
-                          *lse.stride(), # lse和delta一样
                           sm_scale, kernel_size, stride,
-                          B, N, M, QH, KH, 
+                          N, M, QH, KH, 
                           D1, D2, VD,
                           **kwargs
                           )
-        
         if (D1 + D2) == 192:
             kwargs = {"BLOCK_SIZE_N": 64, "BLOCK_SIZE_M": 64, "num_warps": 8, "num_stages": 2}
             
@@ -593,13 +637,8 @@ class _attention(torch.autograd.Function):
         _dq_kernel[grid](dq, do, 
                           q, k, v,
                           lse, delta,
-                          *q.stride(), # dq和q一样
-                          *k.stride(),
-                          *v.stride(),
-                          *do.stride(), # do和o一样
-                          *lse.stride(), # lse和delta一样
                           sm_scale, kernel_size, stride,
-                          B, N, M, QH, KH, 
+                          N, M, QH, KH, 
                           D1, D2, VD,
                           **kwargs
                           )   
