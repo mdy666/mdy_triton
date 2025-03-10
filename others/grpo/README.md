@@ -17,3 +17,6 @@ from datasets import load_dataset
 from transformers import set_seed
 from transformers.trainer_utils import get_last_checkpoint
 ```
+
+# BUG
+之前的grpo_loss可能有个bug，训练时dlosses不连续，算出的梯度可能是错误的，sorry，目前已解决
