@@ -14,17 +14,7 @@ from compress_attn import CompressAttn
 from select_attn_v3 import select_attn, select_for_fwd_bwd
 from fla.ops.nsa import parallel_nsa
 
-# class CompressKV(torch.nn.Module):
-#     def __init__(self, head_dim, kernel_size, stride):
-#         super().__init__()
-#         self.head_dim = head_dim
-#         self.kernel_size = kernel_size
-#         self.stride = stride
-#         self.pe = torch.nn.Parameter(torch.randn(kernel_size, head_dim))
-#         self.weight = torch.nn.Parameter(torch.randn(kernel_size,))
 
-#     def forward(self, x):
-#         return blcok_compress(x, self.weight, self.pe, self.stride)
     
 
 class NsaAttention(torch.nn.Module):

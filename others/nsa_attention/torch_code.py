@@ -174,3 +174,8 @@ def torch_select_attn(q, k, v, select_size, select_indices, sm_scale=None):
     o = p @ v
     return o.transpose(1, 2)
 
+
+def sigmoid_combine(a, b, c, w):
+    gate = torch.nn.Sigmoid()(w)
+    return a * gate[..., 0].unsqueeze(-1) + b * gate[..., 1].unsqueeze(-1) + c * gate[..., 2].unsqueeze(-1)
+
