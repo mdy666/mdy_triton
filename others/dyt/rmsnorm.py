@@ -37,7 +37,7 @@ def _rmsnorm_bwd_dx_fused(DX, DY, DW, X, W, RMS_STD,
     dw = tl.zeros([BLOCK_N,], dtype=tl.float32)
     for row_id in range(start_id, M, tl.num_programs(0)):
         x = tl.load(X + row_id * row_stride + cols, mask=mask, other=0.).to(tl.float32)
-        w = tl.load(W + cols, mask=mask, other=0.)
+        w = tl.load(W + cols, mask=mask, other=0.).to(tl.float32)
         dy = tl.load(DY + row_id * row_stride + cols, mask=mask, other=0.).to(tl.float32)
         rms_std = tl.load(RMS_STD+row_id)
 
@@ -84,6 +84,7 @@ class _TritronRMSNorm(torch.autograd.Function):
                  hidden_state.stride(0),
                  M, N, BLOCK_N, num_warps=8,
                  )
+
         dw = dw.sum(0).to(weight.dtype)
         return dx.view(*ctx.input_shape), dw, None
 
