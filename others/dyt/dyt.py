@@ -39,11 +39,12 @@ def tanh(x):
 #     tl.store(Y + off_m[:, None] * N + off_n[None, :], y, mask=(off_m[:, None] < M) & (off_n[None, :] < N))
     
 
-# @triton.autotune([triton.Config({}, num_stages=ns, num_warps=nw)
+# @triton.autotune([triton.Config({"BLOCK_N":bn}, num_stages=ns, num_warps=nw)
+#                   for bn in [1024, 2048, 4096]
 #                   for ns in [1,2,4]
 #                   for nw in [4, 8, 16, 32]
 #                   ],
-#                   key=['BLOCK_N'])
+#                   key=['N'])
 @triton.jit
 def _dyt_fwd_kernel(X,
                     Y,
@@ -51,28 +52,32 @@ def _dyt_fwd_kernel(X,
                     Gemma,
                     Beta,
                     N:tl.constexpr,
-                    BLOCK_N:tl.constexpr=64
+                    BLOCK_N:tl.constexpr=1024
                     ):
-    row_id = tl.cast(tl.program_id(0), tl.int64)
-    col = tl.arange(0, BLOCK_N)
+    col = tl.cast(tl.program_id(0), tl.int64) * BLOCK_N + tl.arange(0, BLOCK_N)
     mask = col < N
+    row_id = tl.cast(tl.program_id(1), tl.int64)
 
+    X += row_id * N
+    Y += row_id * N
     alpha = tl.load(Alpha).to(tl.float32)
+    
     gemma = tl.load(Gemma + col, mask=mask, other=0.).to(tl.float32)  
     beta = tl.load(Beta + col, mask=mask, other=0.).to(tl.float32) 
-    x = tl.load(X + row_id * N + col, mask=mask, other=0.).to(tl.float32) 
+    x = tl.load(X + col, mask=mask, other=0.).to(tl.float32) 
 
     tanh_x = tanh(alpha * x)
     y = tanh_x * gemma + beta
-    tl.store(Y + row_id * N + col, y, mask=mask)
+    tl.store(Y + col, y, mask=mask)
 
 
 
-# @triton.autotune([triton.Config({}, num_stages=ns, num_warps=nw)
+# @triton.autotune([triton.Config({"BLOCK_N":bn}, num_stages=ns, num_warps=nw)
+#                   for bn in [2048, 4096, 8192]
 #                   for ns in [1,2,4]
 #                   for nw in [4, 8, 16, 32]
 #                   ],
-#                   key=['BLOCK_N'])
+#                   key=['N'])
 @triton.jit
 def _dyt_bwd_kernel(DY,
                     DA,
@@ -83,19 +88,18 @@ def _dyt_bwd_kernel(DY,
                     Gemma,
                     M,
                     N:tl.constexpr,
-                    BLOCK_N:tl.constexpr
+                    BLOCK_N:tl.constexpr=1024
                     ):
-    start_row_id = tl.cast(tl.program_id(0), tl.int64)
-    col = tl.arange(0, BLOCK_N)
+    col = tl.cast(tl.program_id(0), tl.int64) * BLOCK_N + tl.arange(0, BLOCK_N)
     mask = col < N
-    alpha = tl.load(Alpha).to(tl.float32)
-    gemma = tl.load(Gemma + col, mask=mask, other=0.).to(tl.float32)  
-    # beta = tl.load(Beta + col, mask=mask, other=0.).to(tl.float32) 
+    start_row_id = tl.cast(tl.program_id(1), tl.int64)
 
+    alpha = tl.load(Alpha).to(tl.float32)
     da = 0.
+    gemma = tl.load(Gemma + col, mask=mask, other=0.).to(tl.float32)  
     dg = tl.zeros((BLOCK_N,), dtype=tl.float32)
     db = tl.zeros((BLOCK_N,), dtype=tl.float32)
-    for row_id in range(start_row_id, M, tl.num_programs(0), tl.num_programs(0)):
+    for row_id in range(start_row_id, M, tl.num_programs(1)):
         x = tl.load(X + row_id * N + col, mask=mask, other=0.).to(tl.float32) 
         dy = tl.load(DY + row_id * N + col, mask=mask, other=0.).to(tl.float32)
         tanh_x = tanh(alpha * x)
@@ -105,11 +109,10 @@ def _dyt_bwd_kernel(DY,
         da += tl.sum(x * tmp, 0)
         dx = alpha * tmp
         tl.store(DY + row_id * N + col, dx, mask=mask)
-    tl.store(DA + start_row_id, da)
+    
     tl.store(DG + start_row_id * N + col, dg, mask=mask)
     tl.store(DB + start_row_id * N + col, db, mask=mask)
-    # y = tanh(x)
-    # tl.store(Y + off_m[:, None] * N + off_n[None, :], y, mask=(off_m[:, None] < M) & (off_n[None, :] < N))
+    tl.atomic_add(DA + start_row_id, da)
 
 
 
@@ -122,29 +125,14 @@ class _DYT(torch.autograd.Function):
         
         y = torch.empty_like(x)
 
-        # if method == 1:
-        #     kwargs = {'BLOCK_N':256, "BLOCK_M": 32, "num_warps":8, "num_stages": 1}
-        #     grid = lambda meta: (triton.cdiv(N, meta['BLOCK_N']), triton.cdiv(M, meta['BLOCK_M']))
-        #     _dyt_fwd_kernel[grid](x, 
-        #                         y,
-        #                         alpha, 
-        #                         gemma, 
-        #                         beta,
-        #                         M, 
-        #                         N,
-        #                         # **kwargs
-        #                         )
-        # else:
-
-        kwargs = {"num_warps":16, "num_stages": 1}
-        BLOCK_N = triton.next_power_of_2(N)
-        _dyt_fwd_kernel[(M,)](x, 
+        kwargs = {"BLOCK_N": min(triton.next_power_of_2(N), 2048), "num_warps":4, "num_stages": 4}
+        grid = lambda meta: (triton.cdiv(N, meta['BLOCK_N']), M)
+        _dyt_fwd_kernel[(grid)](x, 
                                 y,
                                 alpha, 
                                 gemma, 
                                 beta,
                                 N,
-                                BLOCK_N,
                                 **kwargs,
                                 )
         
@@ -156,24 +144,23 @@ class _DYT(torch.autograd.Function):
         x, alpha, gemma, beta = ctx.saved_tensors
         M, N = x.shape
         NUM_SMS = torch.cuda.get_device_properties('cuda').multi_processor_count
-        da = torch.empty(NUM_SMS, 1, dtype=torch.float32, device=x.device)
+        da = torch.zeros(NUM_SMS, 1, dtype=torch.float32, device=x.device)
         dg = torch.empty(NUM_SMS, N, dtype=torch.float32, device=x.device)
         db = torch.empty(NUM_SMS, N, dtype=torch.float32, device=x.device)
 
-        BLOCK_N = triton.next_power_of_2(N)
-
-        kwargs = {"num_warps":32, "num_stages": 2}
-        _dyt_bwd_kernel[(NUM_SMS,)](dy, 
-                                    da, 
-                                    dg, 
-                                    db,
-                                    x,
-                                    alpha,
-                                    gemma,
-                                    M,
-                                    N,
-                                    BLOCK_N,
-                                    **kwargs)
+        kwargs = {"BLOCK_N": min(triton.next_power_of_2(N), 2048), "num_warps":4, "num_stages": 1}
+        grid = lambda meta: (triton.cdiv(N, meta['BLOCK_N']), NUM_SMS)
+        _dyt_bwd_kernel[grid](  dy, 
+                                da, 
+                                dg, 
+                                db,
+                                x,
+                                alpha,
+                                gemma,
+                                M,
+                                N,
+                                **kwargs
+                                )
         return dy, da.sum(0).to(x.dtype), dg.sum(0).to(x.dtype), db.sum(0).to(x.dtype)
     
 
