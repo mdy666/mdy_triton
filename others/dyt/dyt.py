@@ -128,6 +128,7 @@ def _dyt_bwd_kernel(DY,
 class _DYT(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, alpha, gemma, beta):
+        assert x.is_contiguous()
         ctx.HAVE_BETA = True if beta is not None else False
         ctx.input_shape = x.shape
         x = x.view(-1, ctx.input_shape[-1])
@@ -135,7 +136,10 @@ class _DYT(torch.autograd.Function):
         
         y = torch.empty_like(x)
 
-        kwargs = {"BLOCK_N": min(triton.next_power_of_2(N), 2048), "num_warps":4, "num_stages": 4}
+        if N >= 4096:
+            kwargs = {"BLOCK_N": min(triton.next_power_of_2(N), 2048), "num_warps":4, "num_stages": 1}
+        else:
+            kwargs = {"BLOCK_N": min(triton.next_power_of_2(N), 1024), "num_warps":4, "num_stages": 1}
         grid = lambda meta: (triton.cdiv(N, meta['BLOCK_N']), M)
         _dyt_fwd_kernel[(grid)](x, 
                                 y,
@@ -152,6 +156,7 @@ class _DYT(torch.autograd.Function):
     
     @staticmethod
     def backward(ctx, dy):
+        assert dy.is_contiguous()
         x, alpha, gemma, beta = ctx.saved_tensors
         M, N = x.shape
         NUM_SMS = torch.cuda.get_device_properties('cuda').multi_processor_count
@@ -180,7 +185,14 @@ class _DYT(torch.autograd.Function):
         dg = dg.sum(0).to(gemma.dtype)
         da = da.sum().to(x.dtype).unsqueeze(0)
         return dx, da, dg, db
-    
+
+@torch.compile    
+def torch_dyt_with_beta(x, alpha, gemma, beta):
+    return gemma * torch.tanh(x * alpha) + beta
+
+@torch.compile    
+def torch_dyt_without_beta(x, alpha, gemma):
+    return gemma * torch.tanh(x * alpha)
 
 class DYT(torch.nn.Module):
     def __init__(self, dim, beta=True, init_a=0.5):
@@ -196,8 +208,8 @@ class DYT(torch.nn.Module):
             return _DYT.apply(x, self.alpha, self.gemma, self.beta)
         else:
             if self.beta is None:
-                return self.gemma * torch.tanh(x * self.alpha)
-            return self.gemma * torch.tanh(x * self.alpha) + self.beta
+                return torch_dyt_without_beta(x, self.alpha, self.gemma)
+            return torch_dyt_with_beta(x, self.alpha, self.gemma, self.beta)
 
 
         
