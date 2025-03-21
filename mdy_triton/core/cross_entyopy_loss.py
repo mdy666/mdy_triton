@@ -140,6 +140,7 @@ class _FastCrossEntropyLoss(torch.autograd.Function):
                                             BLOCK_SIZE=BLOCK_SIZE, num_warps=32, num_stages=1
                                             )
         return dlogits.view(*ctx.input_shape), None, None
+
     
 def triton_entropy_loss(logits, labels, num_items_in_batch=None, inplace=False):
     loss =  _FastCrossEntropyLoss.apply(logits, labels, inplace)
