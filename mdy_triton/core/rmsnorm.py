@@ -13,7 +13,7 @@ def _rmsnorm_fwd(X, Y, W, RMS_STD, eps,
     row_id = tl.cast(tl.program_id(0), tl.int64)
     cols = tl.arange(0, BLOCK_N)
     mask = cols < N
-
+    
     x = tl.load(X + row_id * row_stride + cols, mask=mask, other=0.).to(tl.float32)
     w = tl.load(W + cols, mask=mask, other=0.).to(tl.float32)
 
