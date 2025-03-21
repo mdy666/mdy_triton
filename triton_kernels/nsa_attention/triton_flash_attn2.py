@@ -204,8 +204,8 @@ def _bwd_kernel(DQ, DK, DV, DO,
 
 
 # @triton.autotune([triton.Config({'BLOCK_SIZE_N': bsn, 'BLOCK_SIZE_M': bsm}, num_stages=ns, num_warps=nw)
-#                  for bsm in [64, 128]
-#                  for bsn in [64, 128]
+#                  for bsm in [32, 64, 128]
+#                  for bsn in [32, 64, 128]
 #                  for ns in [1, 2]
 #                  for nw in [4, 8]
 #                  ], key=['N', "M"])
@@ -230,14 +230,15 @@ def _dkdv_kernel(DK, DV, DO,
     off_b = tl.cast(tl.program_id(0), tl.int64)
     off_kh = tl.cast(tl.program_id(1), tl.int64)
     nrep = QH//KH
+    nrep = tl.cast(nrep, tl.int64)
     off_qh = off_kh * nrep
 
     Q += off_b * q_stride_b + off_qh * q_stride_h
     K += off_b * k_stride_b + off_kh * k_stride_h 
     V += off_b * v_stride_b + off_kh * v_stride_h
-    DK += off_b * dk_stride_b + off_qh * dk_stride_h 
+    DK += off_b * dk_stride_b + off_kh * dk_stride_h 
     DV += off_b * dv_stride_b + off_kh * dv_stride_h
-    DO += off_b * do_stride_b + off_kh * do_stride_h
+    DO += off_b * do_stride_b + off_qh * do_stride_h
     Lse += off_b * lse_stride_b + off_qh * lse_stride_h
     Delta += off_b * lse_stride_b + off_qh * lse_stride_h
 
@@ -285,12 +286,12 @@ def _dkdv_kernel(DK, DV, DO,
     if D2 > 0:
         tl.store(DK + off_m[:, None] * dk_stride_m + tl.arange(0, D2)[None, :] + D1, acc_dk2, mask=off_m[:, None] < M)
 
-@triton.autotune([triton.Config({'BLOCK_SIZE_N': bsn, 'BLOCK_SIZE_M': bsm}, num_stages=ns, num_warps=nw)
-                 for bsm in [64, 128]
-                 for bsn in [64, 128]
-                 for ns in [1, 2]
-                 for nw in [4, 8]
-                 ], key=['N', "M"])
+# @triton.autotune([triton.Config({'BLOCK_SIZE_N': bsn, 'BLOCK_SIZE_M': bsm}, num_stages=ns, num_warps=nw)
+#                  for bsm in [32, 64, 128]
+#                  for bsn in [32, 64, 128]
+#                  for ns in [1, 2]
+#                  for nw in [4, 8]
+#                  ], key=['N', "M"])
 @triton.jit
 def _dq_kernel(DQ, DO, 
                 Q, K, V, 
@@ -478,7 +479,7 @@ class _attention(torch.autograd.Function):
                           sm_scale, 
                           B, N, M, QH, KH, 
                           D1, D2, VD,
-                        #   **kwargs
+                          **kwargs
                           )
         return dq, dk, dv, None, None, None
 

@@ -10,6 +10,8 @@ import torch.distributed as dist
 from train_model.utils import DistributedDS, MyTrainer, print_rank0
 from transformers import TrainingArguments, Trainer, AutoTokenizer, AutoModelForCausalLM, AutoConfig
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__),
+                                             os.path.pardir)))
 
 def print_rank0(*args):
     if torch.distributed.is_initialized():
@@ -53,6 +55,9 @@ if __name__ == '__main__':
     print_rank0(sys.path)
     print_rank0(args)
     time.sleep(3)
+
+    if args.replace_kernel:
+        from mdy_triton.replace_kernel import *
 
     assert args.global_batch_size % (args.micro_batch_size * world_size) == 0
     acc_grad_steps = args.global_batch_size // (args.micro_batch_size * world_size)
