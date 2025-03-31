@@ -1,6 +1,6 @@
 import importlib
 import transformer_engine as te
-
+import torch
 from .swiglu import swiglu_impl
 
 from .bf16mv_adam import TritonAdamW
@@ -12,6 +12,7 @@ from .dpsk_grouped_linear import GroupedLinear, Fp8Padding, Fp8Unpadding
 # 先换TE的Linear，防止部分megatron先导入te的linear
 # 训练moe模型时，建议不要使用FP8的GroupedLinear, 因为前期每个expert的token数目一直在变化，
 # deep_gemm的kernel都是即时编译，当有大量cache时，速度才能恢复正常。
+# dpsk-fp8知识demo，不如TE的原生FP8快
 def patch(swiglu=True,
           cross_entropy_loss=True,
           bf16mv_adam=True,
@@ -164,3 +165,35 @@ def patch(swiglu=True,
         module_fused_ce = importlib.import_module('megatron.core.fusions.fused_cross_entropy')
         module_fused_ce.fused_vocab_parallel_cross_entropy = fast_cross_entropy_loss
         # print("cross_entropy_loss")
+        from megatron.core import parallel_state
+        from torch.autograd import Variable
+        from torch.nn.parameter import Parameter
+        _FLOAT_TYPES = (torch.FloatTensor, torch.cuda.FloatTensor)
+
+        def conversion_helper(val, conversion):
+            if not isinstance(val, (tuple, list)):
+                return conversion(val)
+            rtn = [conversion_helper(v, conversion) for v in val]
+            if isinstance(val, tuple):
+                rtn = tuple(rtn)
+            return rtn
+        
+        def fp32_to_float16(val, float16_convertor):
+            def half_conversion(val):
+                val_typecheck = val
+                if isinstance(val_typecheck, (Parameter, Variable)):
+                    val_typecheck = val.data
+                if isinstance(val_typecheck, _FLOAT_TYPES):
+                    val = float16_convertor(val)
+                return val
+
+            return conversion_helper(val, half_conversion)
+        
+
+        def forward(self, *inputs, **kwargs):
+            if parallel_state.is_pipeline_first_stage():
+                inputs = fp32_to_float16(inputs, self.float16_convertor)
+            outputs = self.module(*inputs, **kwargs)
+            return outputs
+        module_fp16 = importlib.import_module('megatron.training.training')
+        module_fp16.Float16Module.forward = forward
