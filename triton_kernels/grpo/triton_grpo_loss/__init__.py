@@ -11,7 +11,7 @@ from .core import fused_selective_log_softmax, triton_grpo_loss
 def _get_per_token_logps(self, model, input_ids, attention_mask, logits_to_keep):
     # We add 1 to `logits_to_keep` because the last logits of the sequence is later excluded
     logits = model(input_ids=input_ids, attention_mask=attention_mask, logits_to_keep=logits_to_keep + 1).logits
-    return fused_selective_log_softmax(logits, input_ids, self.temperature)
+    return fused_selective_log_softmax(logits, input_ids, self.temperature, mask=attention_mask)
 
 @profiling_decorator
 def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
