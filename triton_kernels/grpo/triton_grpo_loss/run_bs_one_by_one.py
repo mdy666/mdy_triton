@@ -19,7 +19,7 @@ def _get_per_token_logps(self, model, input_ids, attention_mask, logits_to_keep)
                                            self.temperature, 
                                            mask=attention_mask[idx:idx+1] if attention_mask is not None else None)
         logp_list.append(logp)
-    logps = torch.stack(logp_list)
+    logps = torch.cat(logp_list, axis=0)
     return logps
 
 @profiling_decorator
