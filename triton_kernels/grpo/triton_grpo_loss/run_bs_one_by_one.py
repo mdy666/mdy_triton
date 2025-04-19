@@ -51,7 +51,6 @@ def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=N
     loss_list = []
     per_token_kl_list = []
     is_clipped_list = []
-    
     for idx in range(bs):
         logits = model(input_ids=input_ids[idx:idx+1], 
                        attention_mask=attention_mask[idx:idx+1], 
@@ -78,8 +77,8 @@ def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=N
         is_clipped_list.append(is_clipped)
 
     loss = torch.stack(loss_list).sum()
-    per_token_kl = torch.stack(per_token_kl_list)
-    is_clipped = torch.stack(is_clipped_list)
+    per_token_kl = torch.cat(per_token_kl_list, axis=0)
+    is_clipped = torch.stack(is_clipped_list, axis=0)
 
     # Log the metrics
     mode = "eval" if self.control.should_evaluate else "train"
