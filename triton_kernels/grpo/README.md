@@ -1,14 +1,25 @@
 
-# 安装
+# Install 
 
 ```bash
 pip install .
 ```
-# 使用方法
+# Quick start
 
-trl版本必须是0.16，在open-r1的grpo.py的第一行加入
+The TRL version must be 0.16. Add it to the first line of `grpo.py` in `open-r1`.
 
 ```python
 from triton_grpo_loss import trigger
 ```
+
+# Why save lots of memory
+
+- the diffenence between torch code and titon code
+
+ ![alt text](./imgs/triton_code.jpg)
+
+# The Grad of Clamp OP
+
+ ![alt text](./imgs/clamp.jpg)
+
 
