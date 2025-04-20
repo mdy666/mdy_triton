@@ -5,19 +5,22 @@ from trl.extras.profiling import profiling_decorator
 from .core import fused_selective_log_softmax, triton_grpo_loss
 from transformers.trainer import OptimizerNames, DistributedType
 
+# trade-off between memory and speed
+STEP = 1
+
 @profiling_decorator
 def _get_per_token_logps(self, model, input_ids, attention_mask, logits_to_keep):
     # We add 1 to `logits_to_keep` because the last logits of the sequence is later excluded
     logp_list = []
     bs = input_ids[0]
-    for idx in range(bs):
-        logits = model(input_ids=input_ids[idx:idx+1], 
-                       attention_mask=attention_mask[idx:idx+1] if attention_mask is not None else None, 
+    for idx in range(0, bs, STEP):
+        logits = model(input_ids=input_ids[idx:idx+STEP], 
+                       attention_mask=attention_mask[idx:idx+STEP] if attention_mask is not None else None, 
                        logits_to_keep=logits_to_keep + 1).logits
         logp = fused_selective_log_softmax(logits, 
-                                           input_ids[idx:idx+1], 
+                                           input_ids[idx:idx+STEP], 
                                            self.temperature, 
-                                           mask=attention_mask[idx:idx+1] if attention_mask is not None else None)
+                                           mask=attention_mask[idx:idx+STEP] if attention_mask is not None else None)
         logp_list.append(logp)
     logps = torch.cat(logp_list, axis=0)
     return logps
@@ -51,26 +54,24 @@ def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=N
     loss_list = []
     per_token_kl_list = []
     is_clipped_list = []
-    for idx in range(bs):
-        logits = model(input_ids=input_ids[idx:idx+1], 
-                       attention_mask=attention_mask[idx:idx+1], 
+    total_tokens_this_mbs = completion_mask.sum()
+    for idx in range(0, bs, STEP):
+        logits = model(input_ids=input_ids[idx:idx+STEP], 
+                       attention_mask=attention_mask[idx:idx+STEP], 
                        logits_to_keep=logits_to_keep + 1).logits
         per_token_loss, per_token_kl, is_clipped = triton_grpo_loss(logits, 
-                                                                    old_per_token_logps[idx:idx+1],
-                                                                    ref_per_token_logps[idx:idx+1],
-                                                                    completion_ids[idx:idx+1],
-                                                                    advantages[idx:idx+1],
-                                                                    completion_mask[idx:idx+1],
+                                                                    old_per_token_logps[idx:idx+STEP],
+                                                                    ref_per_token_logps[idx:idx+STEP],
+                                                                    completion_ids[idx:idx+STEP],
+                                                                    advantages[idx:idx+STEP],
+                                                                    completion_mask[idx:idx+STEP],
                                                                     self.temperature,
                                                                     self.beta,
                                                                     self.epsilon_low,
                                                                     self.epsilon_high,)
-        loss = (per_token_loss * completion_mask[idx:idx+1]).sum() / completion_mask.sum()
-
-        if not self.model_accepts_loss_kwargs and self.compute_loss_func is None:
-            loss = loss / self.args.gradient_accumulation_steps
-
-        self.accelerator.backward(loss, **kwargs)
+        loss = (per_token_loss * completion_mask[idx:idx+STEP]).sum() / total_tokens_this_mbs
+        if torch.is_grad_enabled():
+            self.accelerator.backward(loss, **kwargs)
 
         loss_list.append(loss.detach())
         per_token_kl_list.append(per_token_kl)
