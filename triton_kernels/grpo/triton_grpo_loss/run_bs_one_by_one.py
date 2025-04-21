@@ -60,8 +60,8 @@ def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=N
                        attention_mask=attention_mask[idx:idx+STEP], 
                        logits_to_keep=logits_to_keep + 1).logits
         per_token_loss, per_token_kl, is_clipped = triton_grpo_loss(logits, 
-                                                                    old_per_token_logps[idx:idx+STEP],
-                                                                    ref_per_token_logps[idx:idx+STEP],
+                                                                    old_per_token_logps[idx:idx+STEP] if old_per_token_logps is not None else None,
+                                                                    ref_per_token_logps[idx:idx+STEP] if ref_per_token_logps is not None else None,
                                                                     completion_ids[idx:idx+STEP],
                                                                     advantages[idx:idx+STEP],
                                                                     completion_mask[idx:idx+STEP],
