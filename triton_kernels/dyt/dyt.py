@@ -1,42 +1,13 @@
 import torch
 import triton
 import triton.language as tl
+from triton.language.extra.libdevice import tanh
 
-@triton.jit
-def tanh(x):
-    a = tl.exp(x)
-    b = tl.exp(-x)
-    return (a - b) / (a + b)
-
-# @triton.autotune([triton.Config({"BLOCK_N":bn, "BLOCK_M":bm}, num_stages=ns, num_warps=nw)
-#                   for bn in [256, 512]
-#                   for bm in [4, 8, 16]
-#                   for ns in [1,2,4]
-#                   for nw in [4, 8]
-#                   ],
-#                   key=['N'])
 # @triton.jit
-# def _dyt_fwd_kernel(X,
-#                     Y,
-#                     Alpha,
-#                     Gemma,
-#                     Beta,
-#                     M,
-#                     N:tl.constexpr,
-#                     BLOCK_M:tl.constexpr=64,
-#                     BLOCK_N:tl.constexpr=64
-#                     ):
-#     off_m = tl.cast(tl.program_id(1), tl.int64) * BLOCK_M + tl.arange(0, BLOCK_M)
-#     off_n = tl.cast(tl.program_id(0), tl.int64) * BLOCK_N + tl.arange(0, BLOCK_N)
-
-#     alpha = tl.load(Alpha).to(tl.float32)
-#     gemma = tl.load(Gemma + off_n, mask=off_n<N, other=0.).to(tl.float32)  
-#     beta = tl.load(Beta + off_n, mask=off_n<N, other=0.).to(tl.float32) 
-#     x = tl.load(X + off_m[:, None] * N + off_n[None, :], mask=(off_m[:, None] < M) & (off_n[None, :] < N), other=0.).to(tl.float32) 
-
-#     tanh_x = tanh(alpha * x)
-#     y = tanh_x * gemma[None, :] + beta[None, :]
-#     tl.store(Y + off_m[:, None] * N + off_n[None, :], y, mask=(off_m[:, None] < M) & (off_n[None, :] < N))
+# def tanh(x):
+#     a = tl.exp(x)
+#     b = tl.exp(-x)
+#     return (a - b) / (a + b)
     
 
 # @triton.autotune([triton.Config({"BLOCK_N":bn}, num_stages=ns, num_warps=nw)
@@ -79,7 +50,7 @@ def _dyt_fwd_kernel(X,
 # @triton.autotune([triton.Config({"BLOCK_N":bn}, num_stages=ns, num_warps=nw)
 #                   for bn in [1024, 2048, 4096]
 #                   for ns in [1,2,4]
-#                   for nw in [4, 8, 16]
+#                   for nw in [1,2, 4, 8, 16]
 #                   ],
 #                   key=['N'])
 @triton.jit
@@ -165,7 +136,7 @@ class _DYT(torch.autograd.Function):
         db = torch.empty(NUM_SMS, N, dtype=torch.float32, device=x.device) if ctx.HAVE_BETA else None
         dx = torch.empty_like(dy)
 
-        kwargs = {"BLOCK_N": min(triton.next_power_of_2(N), 1024), "num_warps":8, "num_stages": 2}
+        kwargs = {"BLOCK_N": min(triton.next_power_of_2(N), 1024), "num_warps":4, "num_stages": 1}
         grid = lambda meta: (triton.cdiv(N, meta['BLOCK_N']), NUM_SMS)
         _dyt_bwd_kernel[grid](  dy, 
                                 dx,
@@ -186,11 +157,11 @@ class _DYT(torch.autograd.Function):
         da = da.sum().to(x.dtype).unsqueeze(0)
         return dx, da, dg, db
 
-@torch.compile    
+# @torch.compile    
 def torch_dyt_with_beta(x, alpha, gemma, beta):
     return gemma * torch.tanh(x * alpha) + beta
 
-@torch.compile    
+# @torch.compile    
 def torch_dyt_without_beta(x, alpha, gemma):
     return gemma * torch.tanh(x * alpha)
 
