@@ -78,7 +78,8 @@ def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=N
         is_clipped_list.append(is_clipped)
 
     loss = torch.stack(loss_list).sum()
-    per_token_kl = torch.cat(per_token_kl_list, axis=0)
+    if self.beta != 0.0:
+        per_token_kl = torch.cat(per_token_kl_list, axis=0)
     is_clipped = torch.cat(is_clipped_list, axis=0)
 
     # Log the metrics
