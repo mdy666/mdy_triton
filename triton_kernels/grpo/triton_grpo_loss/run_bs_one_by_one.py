@@ -12,7 +12,7 @@ STEP = 1
 def _get_per_token_logps(self, model, input_ids, attention_mask, logits_to_keep):
     # We add 1 to `logits_to_keep` because the last logits of the sequence is later excluded
     logp_list = []
-    bs = input_ids[0]
+    bs = input_ids.size(0)
     for idx in range(0, bs, STEP):
         logits = model(input_ids=input_ids[idx:idx+STEP], 
                        attention_mask=attention_mask[idx:idx+STEP] if attention_mask is not None else None, 
