@@ -39,6 +39,9 @@ def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=N
                                                                 self.beta,
                                                                 self.epsilon_low,
                                                                 self.epsilon_high,)
+     
+    logits.data = torch.Tensor()
+    del logits
     loss = (per_token_loss * completion_mask).sum() / completion_mask.sum()
 
     # Log the metrics

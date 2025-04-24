@@ -300,7 +300,18 @@ class GrpoLoss(torch.autograd.Function):
         # # logits.grad = dlogits.detach()
         return logits.data, None,None,None,None,None,None,None,None,None
 
-def triton_grpo_loss(logits, old_logp, ref_logp, completion_ids, advantages, completion_mask, temperature, beta, eps_low, eps_high):
+def triton_grpo_loss(logits, 
+                     old_logp, 
+                     ref_logp, 
+                     completion_ids, 
+                     advantages, 
+                     completion_mask=None, 
+                     temperature=0.9, 
+                     beta=0.04, 
+                     eps_low=0.2, 
+                     eps_high=0.4):
+    assert logits is not None and completion_ids is not None and advantages is not None, "must provide logits、completion_ids and advantages"
+
     return GrpoLoss.apply(logits, 
                           old_logp, 
                           ref_logp, 

@@ -69,6 +69,8 @@ def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=N
                                                                     self.beta,
                                                                     self.epsilon_low,
                                                                     self.epsilon_high,)
+        logits.data = torch.Tensor()
+        del logits
         loss = (per_token_loss * completion_mask[idx:idx+STEP]).sum() / total_tokens_this_mbs
         if torch.is_grad_enabled():
             self.accelerator.backward(loss, **kwargs)
