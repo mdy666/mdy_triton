@@ -60,9 +60,11 @@ if __name__ == '__main__':
                                 completion_ids[start:end],
                                 advantages[start:end],
                                 completion_mask[start:end])[0]
+                logits.data = torch.Tensor()
+                del logits
                 loss = (per_token_loss * completion_mask[start:end]).sum() / total_token_this_mbs
                 loss.backward()
-                del logits
+
             else:
                 _input = model.model(input_ids=input_ids[start:end],
                                     attention_mask=None, ).last_hidden_state[:, -(T+1):-1]
