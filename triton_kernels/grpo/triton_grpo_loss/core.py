@@ -161,6 +161,7 @@ def _grpo_loss_fwd_kernel(LOGITS,
 @triton.jit
 def _grpo_loss_bwd_kernel(DLOSS,
                         DLOGITS,
+                        LOGITS,
                          OLD_LOGP,
                          REF_LOGP,
                         INPUT_IDS,
@@ -179,6 +180,7 @@ def _grpo_loss_bwd_kernel(DLOSS,
 
     off_b = tl.program_id(0).cast(tl.int64)
     off_l = tl.program_id(1).cast(tl.int64)
+
     
     DLOGITS += off_b * (L+1) * N + off_l * N
     if COMPLETION_MASK is not None:
@@ -187,11 +189,11 @@ def _grpo_loss_bwd_kernel(DLOSS,
         if not_skip == 0:
             for start in range(0, N, BLOCK_N):
                 cols = tl.arange(0, BLOCK_N) + start
-                tl.store(DLOGITS+cols, 0, mask=cols<N)
+                tl.store(DLOGITS+cols, 0., mask=cols<N)
             return
-        
-    DLOSS += off_b * loss_stride0 + off_l * loss_stride1
     
+    LOGITS += off_b * (L+1) * N + off_l * N
+    DLOSS += off_b * loss_stride0 + off_l * loss_stride1
     INPUT_IDS += off_b * L + off_l
     ADVANTAGES += off_b
     LSE += off_b * L + off_l
@@ -200,7 +202,7 @@ def _grpo_loss_bwd_kernel(DLOSS,
     lse = tl.load(LSE).to(tl.float32)
 
     idx = tl.load(INPUT_IDS)
-    x = tl.load(DLOGITS + idx).to(tl.float32) / TEMPERATURE
+    x = tl.load(LOGITS + idx).to(tl.float32) / TEMPERATURE
     logp = x - lse
     if OLD_LOGP is None:
         old_logp = logp
@@ -220,11 +222,16 @@ def _grpo_loss_bwd_kernel(DLOSS,
         ref_logp = tl.load(REF_LOGP).to(tl.float32)
         dlogp += BETA * (1 - tl.exp(ref_logp - logp))
     
+    # REF_LOGP += off_b * L + off_l
+    # ref_logp = tl.load(REF_LOGP).to(tl.float32)
+    # dlogp += BETA * (1 - tl.exp(ref_logp - logp))
+    
     dlogp = dlogp * dloss / TEMPERATURE
+    # tl.store(REF_LOGP, dlogp)
     
     for start_n in tl.range(0, N, BLOCK_N):
         cols = start_n + tl.arange(0, BLOCK_N)
-        logits = tl.load(DLOGITS+cols, mask=cols < N, other=-float('inf')).to(tl.float32) / TEMPERATURE
+        logits = tl.load(LOGITS+cols, mask=cols < N, other=0.).to(tl.float32) / TEMPERATURE
         probs = tl.exp(logits - lse)
         dlogits = tl.where(cols==idx, 1-probs, -probs) * dlogp
         tl.store(DLOGITS+cols, dlogits, mask=cols < N)
@@ -232,7 +239,7 @@ def _grpo_loss_bwd_kernel(DLOSS,
 
 class GrpoLoss(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, logits, old_logp, ref_logp, completion_ids, advantages, completion_mask, temperature, beta, eps_low, eps_high):
+    def forward(ctx, logits, old_logp, ref_logp, completion_ids, advantages, completion_mask, temperature, beta, eps_low, eps_high, inplace):
         assert logits.is_contiguous() and completion_ids.is_contiguous()
         assert old_logp is None or old_logp.is_contiguous()
         assert (ref_logp is not None and ref_logp.is_contiguous()) if beta != 0.0 else True
@@ -267,7 +274,7 @@ class GrpoLoss(torch.autograd.Function):
                                      **kwargs
                                      )
         ctx.save_for_backward(logits, old_logp, ref_logp, completion_ids, advantages, completion_mask, lse)
-        ctx.infos = (temperature, beta, eps_low, eps_high)
+        ctx.infos = (temperature, beta, eps_low, eps_high, inplace)
         # return loss
         return loss, kl, is_clipped
     
@@ -276,11 +283,15 @@ class GrpoLoss(torch.autograd.Function):
         dloss = args[0]
         # print(dloss.shape)
         logits, old_logp, ref_logp, completion_ids, advantages, completion_mask, lse = ctx.saved_tensors
-        temperature, beta, eps_low, eps_high = ctx.infos
+        temperature, beta, eps_low, eps_high, inplace = ctx.infos
         B, L_ADD_1, N = logits.shape
         L = L_ADD_1 - 1
+        # dlogits = logits if inplace else torch.empty_like(logits)
+        dlogits = torch.empty_like(logits)
+        # dlogits = logits.zero_()
         kwargs = {"BLOCK_N":4096, "num_stages":1, "num_warps":16}
         _grpo_loss_bwd_kernel[(B, L)](dloss,
+                                      dlogits,
                                       logits,
                                       old_logp,
                                       ref_logp,
@@ -297,9 +308,8 @@ class GrpoLoss(torch.autograd.Function):
                                       N,
                                       **kwargs
                                         )
-        logits[:, -1, :] = 0
-        # # logits.grad = dlogits.detach()
-        return logits.data, None,None,None,None,None,None,None,None,None
+        dlogits[:, -1, :] = 0
+        return dlogits, None,None,None,None,None,None,None,None,None,None
 
 def triton_grpo_loss(logits, 
                      old_logp, 
@@ -310,7 +320,8 @@ def triton_grpo_loss(logits,
                      temperature=0.9, 
                      beta=0.04, 
                      eps_low=0.2, 
-                     eps_high=0.4):
+                     eps_high=0.4, 
+                     inplace=True):
     assert logits is not None and completion_ids is not None and advantages is not None, "must provide logits、completion_ids and advantages"
 
     return GrpoLoss.apply(logits, 
@@ -322,4 +333,5 @@ def triton_grpo_loss(logits,
                           temperature, 
                           beta, 
                           eps_low, 
-                          eps_high)
+                          eps_high,
+                          inplace)
