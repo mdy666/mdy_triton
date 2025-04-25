@@ -227,8 +227,8 @@ def _grpo_loss_bwd_kernel(DLOSS,
     # dlogp += BETA * (1 - tl.exp(ref_logp - logp))
     
     dlogp = dlogp * dloss / TEMPERATURE
-    # tl.store(REF_LOGP, dlogp)
-    
+    # 感谢游神这行最伟大的代码！
+    tl.debug_barrier()
     for start_n in tl.range(0, N, BLOCK_N):
         cols = start_n + tl.arange(0, BLOCK_N)
         logits = tl.load(LOGITS+cols, mask=cols < N, other=0.).to(tl.float32) / TEMPERATURE
@@ -286,9 +286,8 @@ class GrpoLoss(torch.autograd.Function):
         temperature, beta, eps_low, eps_high, inplace = ctx.infos
         B, L_ADD_1, N = logits.shape
         L = L_ADD_1 - 1
-        # dlogits = logits if inplace else torch.empty_like(logits)
-        dlogits = torch.empty_like(logits)
-        # dlogits = logits.zero_()
+        dlogits = logits if inplace else torch.empty_like(logits)
+        # dlogits = torch.empty_like(logits)
         kwargs = {"BLOCK_N":4096, "num_stages":1, "num_warps":16}
         _grpo_loss_bwd_kernel[(B, L)](dloss,
                                       dlogits,
@@ -335,3 +334,4 @@ def triton_grpo_loss(logits,
                           eps_low, 
                           eps_high,
                           inplace)
+
