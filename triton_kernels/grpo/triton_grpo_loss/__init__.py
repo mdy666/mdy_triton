@@ -70,11 +70,8 @@ def training_step(
         loss, logits = self.compute_loss(model, inputs, num_items_in_batch=num_items_in_batch)
 
     del inputs
-    if (
-        self.args.torch_empty_cache_steps is not None
-        and self.state.global_step % self.args.torch_empty_cache_steps == 0
-    ):
-        torch.cuda.empty_cache()
+
+    torch.cuda.empty_cache()
 
     kwargs = {}
 
