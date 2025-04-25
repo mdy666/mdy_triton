@@ -179,7 +179,8 @@ def _grpo_loss_bwd_kernel(DLOSS,
 
     off_b = tl.program_id(0).cast(tl.int64)
     off_l = tl.program_id(1).cast(tl.int64)
-
+    
+    DLOGITS += off_b * (L+1) * N + off_l * N
     if COMPLETION_MASK is not None:
         COMPLETION_MASK += off_b * L + off_l
         not_skip = tl.load(COMPLETION_MASK)
@@ -190,7 +191,7 @@ def _grpo_loss_bwd_kernel(DLOSS,
             return
         
     DLOSS += off_b * loss_stride0 + off_l * loss_stride1
-    DLOGITS += off_b * (L+1) * N + off_l * N
+    
     INPUT_IDS += off_b * L + off_l
     ADVANTAGES += off_b
     LSE += off_b * L + off_l
