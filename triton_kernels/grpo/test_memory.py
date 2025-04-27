@@ -5,7 +5,8 @@ import argparse
 
 import torch
 from transformers import AutoModelForCausalLM, Qwen2ForCausalLM
-from triton_grpo_loss.core import triton_grpo_loss
+# from triton_grpo_loss.core import triton_grpo_loss
+from triton_grpo_loss.decouple_logp_and_loss import triton_grpo_loss, fused_selective_log_softmax
 from liger_kernel.chunked_loss import LigerFusedLinearGRPOLoss
 
 def get_args():
@@ -54,16 +55,27 @@ if __name__ == '__main__':
             end = start + args.mmbs
             if args.loss == 'my':
                 logits = model(input_ids[start:end], logits_to_keep=T+1).logits
-                per_token_loss = triton_grpo_loss(logits,
-                                old_logp[start:end],
-                                ref_logp[start:end],
-                                completion_ids[start:end],
-                                advantages[start:end],
-                                completion_mask[start:end])[0]
-                logits.data = torch.Tensor()
-                del logits
+                per_token_logps = fused_selective_log_softmax(logits, 
+                                                            completion_ids[start:end], 
+                                                            0.9, 
+                                                            completion_mask[start:end]
+                                                            )
+                # trtton faster than compile code a little, you can change the loss when you need.
+                per_token_loss, per_token_kl, is_clipped = triton_grpo_loss(per_token_logps, 
+                                                                            advantages[start:end],
+                                                                            old_logp[start:end] if old_logp is not None else None,
+                                                                            ref_logp[start:end] if ref_logp is not None else None,
+                                                                            )
+                # per_token_loss = triton_grpo_loss(logits,
+                #                 old_logp[start:end],
+                #                 ref_logp[start:end],
+                #                 completion_ids[start:end],
+                #                 advantages[start:end],
+                #                 completion_mask[start:end])[0]
                 loss = (per_token_loss * completion_mask[start:end]).sum() / total_token_this_mbs
                 loss.backward()
+                logits.data = torch.Tensor()
+                del logits
 
             else:
                 _input = model.model(input_ids=input_ids[start:end],
