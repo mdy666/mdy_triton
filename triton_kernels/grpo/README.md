@@ -27,7 +27,7 @@ Note:
  ![alt text](./imgs/reward.jpg)
 
 ## Memory
- ![alt text](./imgs/memory.jgp)
+ ![alt text](./imgs/memory.jpg)
 
 # Decouple compute logp and loss
 - Thanks for You Jiacheng's advice. Now I split origin `grpo_loss` into 2 kernels. One is compute the logp and another is compute the loss.
