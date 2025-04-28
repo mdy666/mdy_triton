@@ -4,7 +4,7 @@
 
 # Benchmark
 
-- I test the benchmark use the following code.
+- I test the benchmark use the following code. GPU: H200.
 
 ```python
 device = "cuda"
