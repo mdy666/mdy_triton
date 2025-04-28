@@ -26,7 +26,7 @@ for i in range(1, 16):
 df = pd.DataFrame(data)
 print(df)
 
-dim    triton      torch       cuda
+    dim    triton      torch       cuda
 0    1024  0.015140   0.010127   0.038926
 1    2048  0.035008   0.028196   0.075227
 2    3072  0.093735   0.078786   0.209389
