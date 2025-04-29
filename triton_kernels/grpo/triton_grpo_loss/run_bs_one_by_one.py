@@ -5,41 +5,7 @@ from trl.extras.profiling import profiling_decorator
 from .decouple_logp_and_loss import fused_selective_log_softmax, triton_grpo_loss
 # from .core import fused_selective_log_softmax, triton_grpo_loss
 
-try:
-    import deepspeed
-    from accelerate import accelerator
 
-    class DeepSpeedEngineWrapper:
-        """
-        Internal wrapper for deepspeed.runtime.engine.DeepSpeedEngine. This is used to follow conventional training loop.
-
-        Args:
-            engine (deepspeed.runtime.engine.DeepSpeedEngine): deepspeed engine to wrap
-        """
-
-        def __init__(self, engine):
-            self.engine = engine
-
-        def backward(self, loss, **kwargs):
-            # runs backpropagation and handles mixed precision
-            self.engine.backward(loss, **kwargs)
-
-        def step(self):
-            # print("replace done")
-            # Deepspeed's `engine.step` performs the following operations:
-            # - gradient accumulation check
-            # - gradient clipping
-            # - optimizer step
-            # - zero grad
-            # - checking overflow
-            # - lr_scheduler step (only if engine.lr_scheduler is not None)
-            self.engine.step()
-            # and this plugin overrides the above calls with no-ops when Accelerate runs under
-            # Deepspeed, but allows normal functionality for non-Deepspeed cases thus enabling a simple
-            # training loop that works transparently under many training regimes.
-    accelerator.DeepSpeedEngineWrapper = DeepSpeedEngineWrapper
-except:
-    pass
 
 def clear_tensor(t):
     t.data = torch.Tensor()
@@ -201,6 +167,44 @@ def patch(STEP=99999):
     trl.GRPOTrainer._get_per_token_logps = _get_per_token_logps
     trl.GRPOTrainer.compute_loss = compute_loss
     trl.GRPOTrainer.training_step = training_step
+
+
+    try:
+        import deepspeed
+        from accelerate import accelerator
+
+        class DeepSpeedEngineWrapper:
+            """
+            Internal wrapper for deepspeed.runtime.engine.DeepSpeedEngine. This is used to follow conventional training loop.
+
+            Args:
+                engine (deepspeed.runtime.engine.DeepSpeedEngine): deepspeed engine to wrap
+            """
+
+            def __init__(self, engine):
+                self.engine = engine
+
+            def backward(self, loss, **kwargs):
+                # runs backpropagation and handles mixed precision
+                self.engine.backward(loss, **kwargs)
+
+            def step(self):
+                # print("replace done")
+                # Deepspeed's `engine.step` performs the following operations:
+                # - gradient accumulation check
+                # - gradient clipping
+                # - optimizer step
+                # - zero grad
+                # - checking overflow
+                # - lr_scheduler step (only if engine.lr_scheduler is not None)
+                self.engine.step()
+                # and this plugin overrides the above calls with no-ops when Accelerate runs under
+                # Deepspeed, but allows normal functionality for non-Deepspeed cases thus enabling a simple
+                # training loop that works transparently under many training regimes.
+        accelerator.DeepSpeedEngineWrapper = DeepSpeedEngineWrapper
+    except:
+        pass
+    
     import time
     print('*'*100)
     print(f'Run a micro batch one by one, micro_micro_batch_size={STEP}')

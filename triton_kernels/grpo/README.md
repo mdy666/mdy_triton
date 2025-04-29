@@ -23,7 +23,7 @@ Note:
 
 # Training
 
-## Reward(Training now)
+## Reward
  ![alt text](./imgs/reward.jpg)
 
 ## Memory
