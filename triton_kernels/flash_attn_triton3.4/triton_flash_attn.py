@@ -33,7 +33,8 @@ def _attn_fwd(Q,
                 o_stride_n, o_stride_h, o_stride_d,
               sm_scale,
               WINDOW: tl.constexpr,
-              window_size,
+              left_window_size,
+              right_window_size,
               CAUSAL: tl.constexpr,
               T: tl.constexpr,
               KH: tl.constexpr,
@@ -72,16 +73,25 @@ def _attn_fwd(Q,
     l_i = tl.zeros((BLOCK_M,), dtype=tl.float32)
     m_i = tl.zeros((BLOCK_M,), dtype=tl.float32) - float('inf')
 
-    if not WINDOW:
-        start = 0
-    else:
-        start = tl.maximum(start_m - window_size, 0)
-        start = (start // BLOCK_N) * BLOCK_N
         
     if CAUSAL:
-        mid = (start_m // BLOCK_N) * BLOCK_N
+        if not WINDOW:
+            start = 0
+            mid = (start_m // BLOCK_N) * BLOCK_N
+            end = start_m + BLOCK_M
+        else:
+            start = tl.maximum(start_m - left_window_size, 0)
+            mid = start_m + BLOCK_M
+            end = mid
     else:
-        mid = S
+        if not WINDOW:
+            start = 0
+            mid = S
+            end = S
+        else:
+            start = tl.maximum(start_m - left_window_size, 0)
+            mid = tl.minimum(start_m + BLOCK_M + right_window_size, S)
+            end = mid
         
     for start_n in tl.range(start, mid, BLOCK_N):
         k = desc_k.load([start_n, 0])
@@ -94,7 +104,10 @@ def _attn_fwd(Q,
             qk *= sm_scale
         else:
             k_idx = start_n + tl.arange(0, BLOCK_N)
-            mask = ((q_idx[:, None] - window_size) <= k_idx[None, :]) & (q_idx[:, None] >= k_idx[None, :])
+            if CAUSAL:
+                mask = ((q_idx[:, None] - left_window_size) <= k_idx[None, :]) & (q_idx[:, None] >= k_idx[None, :])
+            else:
+                mask = ((q_idx[:, None] - left_window_size) <= k_idx[None, :]) & (q_idx[:, None] + right_window_size >= k_idx[None, :])
             qk = tl.where(mask, qk * sm_scale, float('-inf'))
         # qk = tl.where(q_idx[:, None] >= k_idx[None, :], qk * sm_scale, float('-inf'))
         new_m_i = tl.maximum(tl.max(qk, -1), m_i)
@@ -107,7 +120,8 @@ def _attn_fwd(Q,
         acc = acc *  alpha[:, None] + tl.dot(score.to(v.dtype), v)
         m_i = new_m_i
 
-    for start_n in tl.range(mid, start_m+BLOCK_M, BLOCK_N):
+    # only for causal and no swa
+    for start_n in tl.range(mid, end, BLOCK_N):
         k_idx = start_n + tl.arange(0, BLOCK_N)
         k = desc_k.load([start_n, 0])
         v = desc_v.load([start_n, 0])
@@ -115,12 +129,7 @@ def _attn_fwd(Q,
         if D2 > 0:
             k2 = desc_k2.load([start_n, 0])
             qk = tl.dot(q2, tl.permute(k2, 1, 0), qk)
-        if not WINDOW:
-            qk = tl.where(q_idx[:, None] >= k_idx[None, :], qk * sm_scale, float('-inf'))
-        else:
-            k_idx = start_n + tl.arange(0, BLOCK_N)
-            mask = ((q_idx[:, None] - window_size) <= k_idx[None, :]) & (q_idx[:, None] >= k_idx[None, :])
-            qk = tl.where(mask, qk * sm_scale, float('-inf'))
+        qk = tl.where(q_idx[:, None] >= k_idx[None, :], qk * sm_scale, float('-inf'))
         new_m_i = tl.maximum(tl.max(qk, -1), m_i)
         # alpha = tl.exp(m_i - new_m_i)
         # score = tl.exp(qk - new_m_i[:, None])
@@ -318,6 +327,9 @@ def _dkdv_kernel2(Q,
             do_stride_n, do_stride_h, do_stride_d,
             sm_scale,
             CAUSAL: tl.constexpr,
+            WINDOW: tl.constexpr,
+            left_window_size,
+            right_window_size,
             T: tl.constexpr,
             G: tl.constexpr,
             D1: tl.constexpr,
@@ -355,6 +367,25 @@ def _dkdv_kernel2(Q,
         k2 = desc_k2.load([start_n, 0])
         dk2 = tl.zeros((BLOCK_N, D2), dtype=tl.float32)
         
+    if CAUSAL:
+        if not WINDOW:
+            start = start_n
+            mid = start + tl.cdiv(BLOCK_N, BLOCK_M) * BLOCK_M
+            end = S
+        else:
+            start = start_n
+            mid = start_n + BLOCK_N + left_window_size
+            end = mid
+    else:
+        if not WINDOW:
+            start = 0
+            mid = 0
+            end = S
+        else:
+            start = tl.maximum(start_n - left_window_size, 0)
+            mid = tl.minimum(start_n + BLOCK_N + right_window_size, S)
+            end = mid
+    
     for off_qh in range(off_kh * G, off_kh * G + G):
     
         desc_q = tl.make_tensor_descriptor(Q + bos * q_stride_n + off_qh * q_stride_h, (S, D1), (q_stride_n, q_stride_d), (BLOCK_M, D1))
@@ -362,12 +393,6 @@ def _dkdv_kernel2(Q,
         if D2 > 0:
             desc_q2 = tl.make_tensor_descriptor(Q + bos * q_stride_n + off_qh * q_stride_h + D1, (S, D2), (q_stride_n, q_stride_d), (BLOCK_M, D2))
 
-        if CAUSAL:
-            start = start_n
-            mid = start + tl.cdiv(BLOCK_N, BLOCK_M) * BLOCK_M
-        else:
-            start = 0
-            mid = 0
         for start_m in range(start, mid, BLOCK_M):
             q_idx = start_m + tl.arange(0, BLOCK_M)
             q = desc_q.load([start_m, 0])
@@ -378,7 +403,13 @@ def _dkdv_kernel2(Q,
             if D2 > 0:
                 q2 = desc_q2.load([start_m, 0])
                 qk = tl.dot(q2, tl.permute(k2, 1, 0), qk)
-            mask = (q_idx[:, None] >= k_idx[None, :])
+            if CAUSAL:
+                if not WINDOW:
+                    mask = (q_idx[:, None] >= k_idx[None, :])
+                else:
+                     mask = ((q_idx[:, None] - left_window_size) <= k_idx[None, :]) & (q_idx[:, None] >= k_idx[None, :])
+            else:
+                mask = ((q_idx[:, None] - left_window_size) <= k_idx[None, :]) & (q_idx[:, None] + right_window_size >= k_idx[None, :])
             qk = tl.where(mask, qk * sm_scale_ln2, float('-inf'))
             p = tl.exp2(qk - lse[:, None])
             dv = tl.dot(tl.permute(p, 1, 0).to(do.dtype), do, dv)
@@ -388,7 +419,7 @@ def _dkdv_kernel2(Q,
             if D2 > 0:
                 dk2 = tl.dot(tl.permute(ds, 1, 0).to(q.dtype), q2, dk2)
 
-        for start_m in range(mid, S, BLOCK_M):
+        for start_m in range(mid, end, BLOCK_M):
             q_idx = start_m + tl.arange(0, BLOCK_M)
             q = desc_q.load([start_m, 0])
             do = desc_do.load([start_m, 0])
@@ -435,6 +466,9 @@ def _dq_kernel(Q,
                 do_stride_n, do_stride_h, do_stride_d,
                 sm_scale,
                 CAUSAL: tl.constexpr,
+                WINDOW: tl.constexpr,
+                left_window_size,
+                right_window_size,
                 T: tl.constexpr,
                 G: tl.constexpr,
                 D1: tl.constexpr,
@@ -476,11 +510,25 @@ def _dq_kernel(Q,
         q2 = desc_q2.load([start_m, 0])
         dq2 = tl.zeros((BLOCK_M, D2), dtype=tl.float32)
     
-    start = 0
     if CAUSAL:
-        mid = (start_m // BLOCK_N) * BLOCK_N
+        if not WINDOW:
+            start = 0
+            mid = (start_m // BLOCK_N) * BLOCK_N
+            end = start_m + BLOCK_M
+        else:
+            start = tl.maximum(start_m - left_window_size, 0)
+            mid = start_m + BLOCK_M
+            end = mid
     else:
-        mid = S
+        if not WINDOW:
+            start = 0
+            mid = S
+            end = S
+        else:
+            start = tl.maximum(start_m - left_window_size, 0)
+            mid = tl.minimum(start_m + BLOCK_M + right_window_size, S)
+            end = mid
+            
     for start_n in tl.range(start, mid, BLOCK_N):
         k_idx = start_n + tl.arange(0, BLOCK_N)
         k = desc_k.load([start_n, 0])
@@ -489,14 +537,23 @@ def _dq_kernel(Q,
         if D2 > 0:
             k2 = desc_k2.load([start_n, 0])
             qk = tl.dot(q2, tl.permute(k2, 1, 0), qk)
-        p = tl.exp2(qk * sm_scale_ln2 - lse[:, None])
+        if not WINDOW:
+            p = tl.exp2(qk * sm_scale_ln2 - lse[:, None])
+        else:
+            k_idx = start_n + tl.arange(0, BLOCK_N)
+            if CAUSAL:
+                mask = ((q_idx[:, None] - left_window_size) <= k_idx[None, :]) & (q_idx[:, None] >= k_idx[None, :])
+            else:
+                mask = ((q_idx[:, None] - left_window_size) <= k_idx[None, :]) & (q_idx[:, None] + right_window_size >= k_idx[None, :])
+            qk = tl.where(mask, qk * sm_scale_ln2, float('-inf'))
+            p = tl.exp2(qk - lse[:, None])
         dp = tl.dot(do, tl.permute(v, 1, 0))
         ds = (p * (dp - delta[:, None])).to(k.dtype)
         dq = tl.dot(ds, k, dq)
         if D2 > 0:
             dq2 = tl.dot(ds, k2, dq2)
 
-    for start_n in tl.range(mid, start_m+BLOCK_M, BLOCK_N):
+    for start_n in tl.range(mid, end, BLOCK_N):
         k_idx = start_n + tl.arange(0, BLOCK_N)
         k = desc_k.load([start_n, 0])
         v = desc_v.load([start_n, 0])
@@ -635,7 +692,19 @@ def _bwd_kernel(Q,
     desc_dk.store([start_n, 0], (dk * sm_scale).to(desc_dk.dtype))
     if D2 > 0:
         desc_dk2.store([start_n, 0], (dk2 * sm_scale).to(desc_dk.dtype))
-
+        
+def check_swa(window_size, causal):
+    left_window_size, right_window_size = window_size
+    if causal:
+        window = left_window_size >= 128
+        if window:
+            assert left_window_size % 128 == 0, "目前要求是128的整数倍"
+    else:
+        window = left_window_size >= 128 and right_window_size >= 128
+        if window:
+            assert left_window_size % 128 == 0 and right_window_size % 128 == 0,  "目前要求是128的整数倍, 且左右都开"
+    return window, left_window_size, right_window_size
+    
 class _attention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v, cu_seqlens, max_len, sm_scale, causal, window_size):
@@ -648,9 +717,8 @@ class _attention(torch.autograd.Function):
         assert math.log2(VD).is_integer()
         assert T == T2 and T == T3 and KH == KH2 and D == _D
         assert QH % KH == 0
-        window = window_size > -1
-        if window:
-            assert math.log2(window_size).is_integer()
+        window, left_window_size, right_window_size = check_swa(window_size, causal)
+
         
         if sm_scale is None:
             sm_scale = D ** -0.5
@@ -658,9 +726,12 @@ class _attention(torch.autograd.Function):
         o = torch.zeros(T, QH, VD, dtype=q.dtype, device=q.device)
         lse = torch.zeros(QH, T, device=q.device, dtype=torch.float32)
         
+        # 目前的设定，BLOCK_SIZE不要超过128
         kwargs = {"BLOCK_M":128, "BLOCK_N": 64, "num_warps":4, "num_stages":2}
         if D>128:
             kwargs = {"BLOCK_M":128, "BLOCK_N": 64, "num_warps":8, "num_stages":3}
+        if window:
+            kwargs["BLOCK_M"] = min(kwargs["BLOCK_M"], kwargs['BLOCK_N'])
         grid = lambda meta: (triton.cdiv(max_len, meta['BLOCK_M']), B, QH)
         _attn_fwd[grid](
             q, 
@@ -675,7 +746,8 @@ class _attention(torch.autograd.Function):
             *o.stride(),
             sm_scale,
             window,
-            window_size,
+            left_window_size,
+            right_window_size,
             causal,
             T,
             KH,
@@ -690,15 +762,15 @@ class _attention(torch.autograd.Function):
         ctx.sm_scale = sm_scale
         ctx.infos = (B, T, QH, KH, G, D, D1, D2, VD, sm_scale, max_len)
         ctx.causal = causal
-        ctx.window_size = window_size
+        ctx.window_info = (window, left_window_size, right_window_size)
         return o, lse
 
     @staticmethod
     def backward(ctx, do, dlse):
         q, k, v, o, lse, cu_seqlens = ctx.saved_tensors
         B, T, QH, KH, G, D, D1, D2, VD, sm_scale, max_len = ctx.infos
+        window, left_window_size, right_window_size = ctx.window_info 
         assert do.is_contiguous()
-        assert ctx.window_size == -1
 
         delta = torch.empty_like(lse)
         pre_kwargs = {"BLOCK_M": 16, "num_warps": 8, "num_stages": 4}
@@ -768,6 +840,9 @@ class _attention(torch.autograd.Function):
                         *do.stride(),
                         sm_scale,
                         ctx.causal,
+                        window,
+                        left_window_size,
+                        right_window_size,
                         T,
                         G,
                         D1,
@@ -796,6 +871,9 @@ class _attention(torch.autograd.Function):
                             *do.stride(),
                             sm_scale,
                             ctx.causal,
+                             window,
+                            left_window_size,
+                            right_window_size,
                             T,
                             G,
                             D1,
@@ -840,5 +918,5 @@ class _attention(torch.autograd.Function):
         # dq = dq.to(q.dtype)
         return dq, dk, dv, None, None, None, None, None
 
-def triton_flash_attn_varlen_func(q, k, v, cu_seqlens, max_len, sm_scale=None, causal=True, window_size=-1) -> torch.Tensor:
+def triton_flash_attn_varlen_func(q, k, v, cu_seqlens, max_len, sm_scale=None, causal=True, window_size=(-1, -1)) -> torch.Tensor:
     return _attention.apply(q, k, v, cu_seqlens, max_len, sm_scale, causal, window_size)
