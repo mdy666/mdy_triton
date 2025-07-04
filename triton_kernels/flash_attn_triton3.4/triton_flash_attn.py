@@ -731,7 +731,7 @@ class _attention(torch.autograd.Function):
         if D>128:
             kwargs = {"BLOCK_M":128, "BLOCK_N": 64, "num_warps":8, "num_stages":3}
         if window:
-            kwargs["BLOCK_M"] = min(kwargs["BLOCK_M"], kwargs['BLOCK_N'])
+            kwargs = {"BLOCK_M":64, "BLOCK_N":64, "num_warps":4, "num_stages":3}
         grid = lambda meta: (triton.cdiv(max_len, meta['BLOCK_M']), B, QH)
         _attn_fwd[grid](
             q, 
